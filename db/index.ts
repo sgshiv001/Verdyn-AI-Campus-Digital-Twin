@@ -11,3 +11,13 @@ export function getDb() {
 
   return drizzle(env.DB, { schema });
 }
+
+export function getD1() {
+  if (!env.DB) {
+    throw new Error(
+      "The campus data service is unavailable because the DB binding is not configured."
+    );
+  }
+
+  return env.DB;
+}
