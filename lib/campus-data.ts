@@ -1,4 +1,5 @@
 import { getD1 } from "@/db";
+import { analyzeCampus, type HourlyReading } from "@/lib/campus-analytics";
 
 const stamp = "2026-09-29T00:00:00.000Z";
 const energy = [42, 49, 47, 55, 51, 68, 63, 73, 67, 78, 75, 88];
@@ -6,8 +7,59 @@ const water = [34, 39, 37, 46, 42, 53, 48, 57, 54, 62, 58, 66];
 
 type D1Row = Record<string, unknown>;
 
-function rows(result: D1Result<D1Row>) {
-  return result.results ?? [];
+function rows(result: D1Result<unknown>): D1Row[] {
+  return (result.results ?? []) as D1Row[];
+}
+
+async function seedHistoricalReadings() {
+  const db = getD1();
+  const yesterday = new Date();
+  yesterday.setUTCHours(0, 0, 0, 0);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const latestDay = yesterday.toISOString().slice(0, 10);
+  const existing = await db.prepare(
+    "SELECT COUNT(*) AS count FROM campus_readings WHERE resource = ? AND recorded_at >= ? AND recorded_at < ?",
+  ).bind("energy_hourly_kwh", latestDay + "T00:00:00.000Z", latestDay + "T23:59:59.999Z").first<{ count: number }>();
+  if ((existing?.count ?? 0) === 24) return;
+
+  const statements: D1PreparedStatement[] = [];
+  for (let dayOffset = 8; dayOffset >= 1; dayOffset--) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - dayOffset);
+    for (let hour = 0; hour < 24; hour++) {
+      const recordedAt = new Date(date);
+      recordedAt.setUTCHours(hour);
+      const daytime = Math.max(0, Math.sin(((hour - 6) / 17) * Math.PI));
+      const energyBase = 530 + 480 * daytime + 34 * Math.sin((hour / 24) * Math.PI * 4);
+      const waterBase = 0.85 + 2.35 * daytime + 0.18 * Math.cos((hour / 24) * Math.PI * 4);
+      const dayVariation = 1 + 0.025 * Math.sin(dayOffset * 2.1 + hour * 0.3);
+      const latest = dayOffset === 1;
+      const energyValue = Number((energyBase * dayVariation * (latest && hour === 14 ? 1.43 : 1)).toFixed(1));
+      const waterValue = Number((waterBase * dayVariation * (latest && (hour === 2 || hour === 3) ? 2.2 : 1)).toFixed(2));
+      statements.push(db.prepare(
+        "INSERT OR IGNORE INTO campus_readings (recorded_at, resource, building, value, unit, source) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(recordedAt.toISOString(), "energy_hourly_kwh", "Main Campus", energyValue, "kWh", "simulated"));
+      statements.push(db.prepare(
+        "INSERT OR IGNORE INTO campus_readings (recorded_at, resource, building, value, unit, source) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(recordedAt.toISOString(), "water_hourly_kl", "Science Block", waterValue, "kL", "simulated"));
+    }
+  }
+  for (let start = 0; start < statements.length; start += 60) {
+    await db.batch(statements.slice(start, start + 60));
+  }
+}
+
+export async function getCampusAnalytics() {
+  const db = getD1();
+  await seedHistoricalReadings();
+  const earliest = new Date();
+  earliest.setUTCHours(0, 0, 0, 0);
+  earliest.setUTCDate(earliest.getUTCDate() - 8);
+  const result = await db.prepare(
+    "SELECT resource, building, recorded_at AS recordedAt, value, unit, source FROM campus_readings WHERE resource IN (?, ?) AND recorded_at >= ? ORDER BY recorded_at",
+  ).bind("energy_hourly_kwh", "water_hourly_kl", earliest.toISOString()).all<HourlyReading>();
+  return analyzeCampus(result.results ?? []);
 }
 
 export async function seedCampusData() {
@@ -69,11 +121,11 @@ export async function seedCampusData() {
 export async function getCampusOverview() {
   const db = getD1();
   await seedCampusData();
-  const [metricResult, energyResult, waterResult, alertResult, recommendationResult] = await db.batch([
+  const analytics = await getCampusAnalytics();
+  const [metricResult, energyResult, waterResult, recommendationResult] = await db.batch([
     db.prepare("SELECT id, label, value, unit, change_text, trend, accent FROM campus_metrics ORDER BY id"),
     db.prepare("SELECT value FROM campus_readings WHERE resource = ? ORDER BY recorded_at").bind("energy"),
     db.prepare("SELECT value FROM campus_readings WHERE resource = ? ORDER BY recorded_at").bind("water"),
-    db.prepare("SELECT id, title, detail, building, severity, status FROM campus_alerts WHERE status = ? ORDER BY created_at DESC").bind("open"),
     db.prepare("SELECT id, title, detail, impact, tag, tone, category, status FROM campus_recommendations ORDER BY id"),
   ]);
   const recommendations = rows(recommendationResult);
@@ -87,7 +139,8 @@ export async function getCampusOverview() {
       energy: rows(energyResult).map((item) => Number(item.value)),
       water: rows(waterResult).map((item) => Number(item.value)),
     },
-    alerts: rows(alertResult),
+    alerts: analytics.anomalies,
+    analytics,
     recommendations,
     mobility: { cleanTrips: 68, shuttleTrips: 1286, bikeRides: 438, avoidedCarbon: 2.1 },
     updatedAt: new Date().toISOString(),
@@ -105,8 +158,8 @@ export async function activateEfficiencyScenario() {
 export async function planRecommendation(id: string) {
   const db = getD1();
   await seedCampusData();
-  const result = await db.prepare("UPDATE campus_recommendations SET status = ?, updated_at = ? WHERE id = ? AND status != ?")
-    .bind("planned", new Date().toISOString(), id, "planned").run();
+  const result = await db.prepare("UPDATE campus_recommendations SET status = ?, updated_at = ? WHERE id = ? AND status NOT IN (?, ?)")
+    .bind("planned", new Date().toISOString(), id, "planned", "active").run();
   if (!result.meta.changes) return null;
   return { id, status: "planned" };
 }
