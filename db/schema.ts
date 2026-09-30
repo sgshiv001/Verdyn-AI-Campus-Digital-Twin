@@ -1,5 +1,27 @@
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const campusImports = sqliteTable("campus_imports", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  resource: text("resource").notNull(),
+  building: text("building").notNull(),
+  source: text("source").notNull(),
+  rowCount: integer("row_count").notNull(),
+  missingHours: integer("missing_hours").notNull(),
+  startAt: text("start_at").notNull(),
+  endAt: text("end_at").notNull(),
+  status: text("status").notNull().default("staging"),
+  active: integer("active").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_imports_resource_active").on(table.resource, table.active)]);
+
+export const campusImportReadings = sqliteTable("campus_import_readings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  importId: text("import_id").notNull().references(() => campusImports.id),
+  recordedAt: text("recorded_at").notNull(),
+  value: real("value").notNull(),
+}, (table) => [uniqueIndex("idx_import_readings_unique").on(table.importId, table.recordedAt)]);
+
 export const campusReadings = sqliteTable(
   "campus_readings",
   {

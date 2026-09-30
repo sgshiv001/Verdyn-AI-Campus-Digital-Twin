@@ -18,6 +18,9 @@ export type ResourceForecast = {
   resource: HourlyReading["resource"];
   building: string;
   unit: HourlyReading["unit"];
+  source: string;
+  timeZone: string;
+  analysisDay: string;
   horizon: string;
   method: string;
   historicalDays: number;
@@ -49,12 +52,13 @@ const median = (values: number[]) => {
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
-const hourOf = (reading: HourlyReading) => new Date(reading.recordedAt).getUTCHours();
-const dayOf = (reading: HourlyReading) => reading.recordedAt.slice(0, 10);
-const labelHour = (recordedAt: string) => new Date(recordedAt).toLocaleTimeString("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
+const shiftedDate = (timestamp: string, timeZone: string) => new Date(Date.parse(timestamp) + (timeZone === "Asia/Kolkata" ? 330 * 60_000 : 0));
+const hourOf = (reading: HourlyReading, timeZone: string) => shiftedDate(reading.recordedAt, timeZone).getUTCHours();
+const dayOf = (reading: HourlyReading, timeZone: string) => shiftedDate(reading.recordedAt, timeZone).toISOString().slice(0, 10);
+const labelHour = (recordedAt: string, timeZone: string) => new Date(recordedAt).toLocaleTimeString("en-GB", { timeZone, hour: "2-digit", minute: "2-digit" });
 
-function baseline(history: HourlyReading[], hour: number) {
-  const sameHour = history.filter((reading) => hourOf(reading) === hour).map((reading) => reading.value);
+function baseline(history: HourlyReading[], hour: number, timeZone: string) {
+  const sameHour = history.filter((reading) => hourOf(reading, timeZone) === hour).map((reading) => reading.value);
   if (sameHour.length < 3) return null;
   const expected = median(sameHour);
   const mad = median(sameHour.map((value) => Math.abs(value - expected)));
@@ -62,32 +66,32 @@ function baseline(history: HourlyReading[], hour: number) {
   return { expected, robustSigma, count: sameHour.length };
 }
 
-function latestCompleteDay(readings: HourlyReading[]) {
-  const days = [...new Set(readings.map(dayOf))].sort();
-  return [...days].reverse().find((day) => new Set(readings.filter((reading) => dayOf(reading) === day).map(hourOf)).size === 24);
+function latestCompleteDay(readings: HourlyReading[], timeZone: string) {
+  const days = [...new Set(readings.map((r) => dayOf(r, timeZone)))].sort();
+  return [...days].reverse().find((day) => new Set(readings.filter((reading) => dayOf(reading, timeZone) === day).map((r) => hourOf(r, timeZone))).size === 24);
 }
 
-export function analyzeResource(readings: HourlyReading[]): { forecast: ResourceForecast | null; anomalies: ReadingAnomaly[] } {
+export function analyzeResource(readings: HourlyReading[], timeZone = "UTC"): { forecast: ResourceForecast | null; anomalies: ReadingAnomaly[] } {
   const valid = readings
     .filter((reading) => Number.isFinite(reading.value) && reading.value >= 0 && Number.isFinite(Date.parse(reading.recordedAt)))
     .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
   if (!valid.length) return { forecast: null, anomalies: [] };
-  const completeDay = latestCompleteDay(valid);
+  const completeDay = latestCompleteDay(valid, timeZone);
   if (!completeDay) return { forecast: null, anomalies: [] };
-  const currentDay = valid.filter((reading) => dayOf(reading) === completeDay);
-  const history = valid.filter((reading) => dayOf(reading) < completeDay);
-  const historicalDays = new Set(history.map(dayOf)).size;
+  const currentDay = valid.filter((reading) => dayOf(reading, timeZone) === completeDay);
+  const history = valid.filter((reading) => dayOf(reading, timeZone) < completeDay);
+  const historicalDays = new Set(history.map((r) => dayOf(r, timeZone))).size;
   if (historicalDays < 3) return { forecast: null, anomalies: [] };
 
-  const samples = Array.from({ length: 24 }, (_, hour) => baseline(history, hour));
+  const samples = Array.from({ length: 24 }, (_, hour) => baseline(history, hour, timeZone));
   if (samples.some((sample) => !sample)) return { forecast: null, anomalies: [] };
   const baselines = samples as NonNullable<(typeof samples)[number]>[];
   const [first] = currentDay;
-  const nextDay = new Date(completeDay + "T00:00:00.000Z");
+  const nextDay = new Date(completeDay + (timeZone === "Asia/Kolkata" ? "T00:00:00.000+05:30" : "T00:00:00.000Z"));
   nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   const points = baselines.map((item, hour) => {
     const date = new Date(nextDay);
-    date.setUTCHours(hour);
+    date.setTime(nextDay.getTime() + hour * 3_600_000);
     const margin = Math.max(item.expected * 0.15, item.robustSigma * 2);
     return {
       recordedAt: date.toISOString(),
@@ -98,16 +102,16 @@ export function analyzeResource(readings: HourlyReading[]): { forecast: Resource
   });
   const peak = points.reduce((highest, point) => point.value > highest.value ? point : highest);
   const errors = currentDay.map((reading) => {
-    const expected = baselines[hourOf(reading)].expected;
+    const expected = baselines[hourOf(reading, timeZone)].expected;
     return Math.abs(reading.value - expected) / Math.max(expected, 0.01);
   });
   const typicalErrorPercent = round(median(errors) * 100);
   const resource = first.resource;
   const title = resource === "water_hourly_kl" ? "Water flow above pattern" : "Energy draw above pattern";
   const anomalies = currentDay.flatMap((reading) => {
-    const sample = baselines[hourOf(reading)];
+    const sample = baselines[hourOf(reading, timeZone)];
     const difference = reading.value - sample.expected;
-    const threshold = Math.max(sample.expected * 0.3, sample.robustSigma * 3, resource === "water_hourly_kl" ? 0.4 : 70);
+    const threshold = Math.max(sample.expected * 0.3, sample.robustSigma * 3, resource === "water_hourly_kl" ? 0.4 : 1);
     if (difference <= threshold) return [];
     const deltaPercent = round((difference / Math.max(sample.expected, 0.01)) * 100);
     const confidence = Math.min(99, Math.round(60 + Math.min(39, (difference / threshold - 1) * 25) + Math.min(5, historicalDays - 3)));
@@ -126,7 +130,7 @@ export function analyzeResource(readings: HourlyReading[]): { forecast: Resource
       confidence,
       severity,
       title,
-      detail: `${reading.building} · ${labelHour(reading.recordedAt)} UTC`,
+      detail: `${reading.building} · ${dayOf(reading, timeZone)} ${labelHour(reading.recordedAt, timeZone)} ${timeZone === "Asia/Kolkata" ? "IST" : "UTC"} · ${reading.source}`,
       reason: `${observed} ${reading.unit} observed versus ${expected} ${reading.unit} typical at this hour (+${deltaPercent}%).`,
     } satisfies ReadingAnomaly];
   });
@@ -135,6 +139,9 @@ export function analyzeResource(readings: HourlyReading[]): { forecast: Resource
       resource,
       building: first.building,
       unit: first.unit,
+      source: first.source,
+      timeZone,
+      analysisDay: completeDay,
       horizon: "next 24 hours",
       method: "same-hour median of prior days",
       historicalDays,
@@ -148,11 +155,38 @@ export function analyzeResource(readings: HourlyReading[]): { forecast: Resource
 }
 
 export function analyzeCampus(readings: HourlyReading[]) {
-  const energy = analyzeResource(readings.filter((reading) => reading.resource === "energy_hourly_kwh"));
-  const water = analyzeResource(readings.filter((reading) => reading.resource === "water_hourly_kl"));
+  const energyReadings = readings.filter((reading) => reading.resource === "energy_hourly_kwh");
+  const waterReadings = readings.filter((reading) => reading.resource === "water_hourly_kl");
+  const energy = analyzeResource(energyReadings, energyReadings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
+  const water = analyzeResource(waterReadings, waterReadings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
   return {
-    dataSource: "simulated hourly readings",
+    dataSource: [energyReadings[0]?.source, waterReadings[0]?.source].filter(Boolean).join(" / "),
     forecasts: { energy: energy.forecast, water: water.forecast },
     anomalies: [...water.anomalies, ...energy.anomalies].sort((a, b) => b.confidence - a.confidence),
+  };
+}
+
+export function backtestResource(readings: HourlyReading[], timeZone = "Asia/Kolkata", holdoutDays = 7) {
+  const days = [...new Set(readings.map((r) => dayOf(r, timeZone)))].sort();
+  const completeDays = days.filter((day) => readings.filter((r) => dayOf(r, timeZone) === day).length === 24);
+  const heldout = completeDays.slice(Math.max(3, completeDays.length - holdoutDays));
+  const comparisons = heldout.flatMap((day) => {
+    const history = readings.filter((r) => dayOf(r, timeZone) < day);
+    return readings.filter((r) => dayOf(r, timeZone) === day).flatMap((reading) => {
+      const sample = baseline(history, hourOf(reading, timeZone), timeZone);
+      return sample ? [{ actual: reading.value, predicted: sample.expected }] : [];
+    });
+  });
+  if (!comparisons.length) return null;
+  const absoluteError = comparisons.reduce((sum, row) => sum + Math.abs(row.actual - row.predicted), 0);
+  const actualTotal = comparisons.reduce((sum, row) => sum + row.actual, 0);
+  return {
+    method: "Chronological walk-forward: each test day uses only earlier readings",
+    testDays: heldout.length,
+    testHours: comparisons.length,
+    startDay: heldout[0], endDay: heldout.at(-1),
+    mae: round(absoluteError / comparisons.length, 2),
+    wapePercent: actualTotal ? round(absoluteError / actualTotal * 100, 1) : null,
+    unit: readings[0]?.unit,
   };
 }

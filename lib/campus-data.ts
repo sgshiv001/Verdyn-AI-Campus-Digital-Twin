@@ -1,5 +1,6 @@
 import { getD1 } from "@/db";
-import { analyzeCampus, type HourlyReading } from "@/lib/campus-analytics";
+import { analyzeCampus, backtestResource, type HourlyReading } from "@/lib/campus-analytics";
+import { ensureIndiaSample, getActiveImports } from "@/lib/campus-imports";
 
 const stamp = "2026-09-29T00:00:00.000Z";
 const energy = [42, 49, 47, 55, 51, 68, 63, 73, 67, 78, 75, 88];
@@ -52,14 +53,37 @@ async function seedHistoricalReadings() {
 
 export async function getCampusAnalytics() {
   const db = getD1();
+  await ensureIndiaSample();
   await seedHistoricalReadings();
+  const imported = await getActiveImports();
   const earliest = new Date();
   earliest.setUTCHours(0, 0, 0, 0);
   earliest.setUTCDate(earliest.getUTCDate() - 8);
   const result = await db.prepare(
     "SELECT resource, building, recorded_at AS recordedAt, value, unit, source FROM campus_readings WHERE resource IN (?, ?) AND recorded_at >= ? ORDER BY recorded_at",
   ).bind("energy_hourly_kwh", "water_hourly_kl", earliest.toISOString()).all<HourlyReading>();
-  return analyzeCampus(result.results ?? []);
+  const importedResources = new Set(imported.datasets.map((dataset) => dataset.resource));
+  const readings = [...(result.results ?? []).filter((r) => !importedResources.has(r.resource)), ...imported.readings];
+  const analytics = analyzeCampus(readings);
+  return {
+    ...analytics,
+    datasets: imported.datasets,
+    evaluation: {
+      energy: backtestResource(readings.filter((r) => r.resource === "energy_hourly_kwh"), importedResources.has("energy_hourly_kwh") ? "Asia/Kolkata" : "UTC"),
+      water: backtestResource(readings.filter((r) => r.resource === "water_hourly_kl"), importedResources.has("water_hourly_kl") ? "Asia/Kolkata" : "UTC"),
+    },
+    latestReadings: {
+      energy: latestDayReadings(readings.filter((r) => r.resource === "energy_hourly_kwh"), analytics.forecasts.energy),
+      water: latestDayReadings(readings.filter((r) => r.resource === "water_hourly_kl"), analytics.forecasts.water),
+    },
+  };
+}
+
+function latestDayReadings(readings: HourlyReading[], forecast: ReturnType<typeof analyzeCampus>["forecasts"]["energy"]) {
+  const timeZone = forecast?.timeZone ?? (readings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
+  const dayOf = (r: HourlyReading) => new Date(Date.parse(r.recordedAt) + (timeZone === "Asia/Kolkata" ? 330 * 60_000 : 0)).toISOString().slice(0, 10);
+  const day = forecast?.analysisDay ?? readings.map(dayOf).sort().at(-1);
+  return readings.filter((r) => dayOf(r) === day);
 }
 
 export async function seedCampusData() {
@@ -130,14 +154,29 @@ export async function getCampusOverview() {
   ]);
   const recommendations = rows(recommendationResult);
   const isOptimized = recommendations.some((item) => item.id === "hvac" && item.status === "active");
+  const importedEnergy = analytics.datasets.find((item) => item.resource === "energy_hourly_kwh");
+  const metrics = rows(metricResult);
+  if (importedEnergy && analytics.latestReadings.energy.length) {
+    const energyMetric = metrics.find((item) => item.id === "energy");
+    if (energyMetric) Object.assign(energyMetric, {
+      label: "Building energy", value: Number(analytics.latestReadings.energy.reduce((sum, r) => sum + r.value, 0).toFixed(1)), unit: "kWh",
+      change_text: analytics.forecasts.energy ? `${analytics.forecasts.energy.analysisDay} · historical` : "CSV · limited history", trend: "neutral",
+    });
+  }
+  const importedWater = analytics.datasets.find((item) => item.resource === "water_hourly_kl");
+  if (importedWater && analytics.latestReadings.water.length) {
+    const waterMetric = metrics.find((item) => item.id === "water");
+    if (waterMetric) Object.assign(waterMetric, { label: "Building water", value: Number(analytics.latestReadings.water.reduce((sum, r) => sum + r.value, 0).toFixed(2)), unit: "kL", change_text: analytics.forecasts.water ? `${analytics.forecasts.water.analysisDay} · CSV` : "CSV · limited history", trend: "neutral" });
+  }
+  metrics.filter((item) => item.id !== "energy" && !(item.id === "water" && importedWater)).forEach((item) => { item.change_text = "Demo · " + item.change_text; });
 
   return {
     score: isOptimized ? 87 : 82,
     optimized: isOptimized,
-    metrics: rows(metricResult),
+    metrics,
     series: {
-      energy: rows(energyResult).map((item) => Number(item.value)),
-      water: rows(waterResult).map((item) => Number(item.value)),
+      energy: importedEnergy ? analytics.latestReadings.energy.map((r) => r.value) : rows(energyResult).map((item) => Number(item.value)),
+      water: importedWater ? analytics.latestReadings.water.map((r) => r.value) : rows(waterResult).map((item) => Number(item.value)),
     },
     alerts: analytics.anomalies,
     analytics,
