@@ -39,7 +39,11 @@ Timestamps require explicit offsets and align to the hour in IST. Identical
 duplicates are skipped; conflicts, malformed dates, missing values and invalid
 units are rejected. Gaps are reported and not filled by the importer. Imported
 readings and metadata persist in D1. An upload becomes active only after all its
-rows are saved. Earlier datasets are retained, and a repeat import is idempotent.
+rows are saved. Each building/resource keeps its own active dataset; importing
+another building does not replace it. Earlier datasets are retained, and a repeat
+import is idempotent. Comparisons use shared complete IST days, or clearly dated
+latest totals when no shared day exists. Demo readings are excluded from comparisons.
 
-Water, transportation, carbon, recommendations and the sustainability score
-remain explicitly marked as demo data. Energy alone is connected to COMBED.
+Default water, transportation, carbon, recommendations and the sustainability
+score remain explicitly marked as demo data. Energy alone is connected to COMBED;
+custom energy and water uploads are labelled as unverified CSV data.

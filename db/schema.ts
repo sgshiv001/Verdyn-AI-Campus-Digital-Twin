@@ -1,4 +1,5 @@
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export const campusImports = sqliteTable("campus_imports", {
   id: text("id").primaryKey(),
@@ -13,7 +14,10 @@ export const campusImports = sqliteTable("campus_imports", {
   status: text("status").notNull().default("staging"),
   active: integer("active").notNull().default(0),
   createdAt: text("created_at").notNull(),
-}, (table) => [index("idx_imports_resource_active").on(table.resource, table.active)]);
+}, (table) => [index("idx_imports_resource_active").on(table.resource, table.active),
+  uniqueIndex("idx_imports_building_resource_active").on(table.resource, table.building)
+    .where(sql`${table.active} = 1 AND ${table.status} = 'ready'`),
+]);
 
 export const campusImportReadings = sqliteTable("campus_import_readings", {
   id: integer("id").primaryKey({ autoIncrement: true }),

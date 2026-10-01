@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `idx_imports_building_resource_active` ON `campus_imports` (`resource`,`building`) WHERE "campus_imports"."active" = 1 AND "campus_imports"."status" = 'ready';

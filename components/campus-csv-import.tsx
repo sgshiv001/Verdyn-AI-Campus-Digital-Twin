@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Preview = Omit<CsvPreview, "readings"> & {readings: CsvPreview["readings"]};
-export function CampusCsvImport({ onImported }: {onImported: () => Promise<void>}) {
+export function CampusCsvImport({ onImported }: {onImported: (building: string) => Promise<void>}) {
   const [csv, setCsv] = useState("");
   const [name, setName] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -36,9 +36,9 @@ export function CampusCsvImport({ onImported }: {onImported: () => Promise<void>
       const response = await fetch("/api/campus/import", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({csv, name, action: "import"})});
       const result = await response.json() as Preview & {error?: string};
       if (!response.ok) throw new Error(result.error);
-      setSaved(`${result.rowCount} hourly readings saved. This CSV is now active.`);
+      setSaved(`${result.rowCount} hourly readings saved for ${result.building}. Other buildings are unchanged.`);
       setPreview(null);
-      await onImported();
+      await onImported(result.building);
     } catch (error) { setError(error instanceof Error ? error.message : "The import could not be saved."); }
     finally { setBusy(false); }
   };
@@ -60,7 +60,7 @@ export function CampusCsvImport({ onImported }: {onImported: () => Promise<void>
       <pre>2014-06-03T00:00:00+05:30,IIIT-Delhi Academic Block,energy,40.5,kWh</pre>
       {busy && <p role="status">Checking and saving readings…</p>}
       {error && <p role="alert" className="csv-error">{error}</p>}
-      {preview && <div className="csv-preview"><div><b>{preview.building}</b><span>{preview.rowCount} hours · {preview.completeDays} complete days · {preview.unit}</span></div><p>{new Date(preview.start).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})} – {new Date(preview.end).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})}</p>{preview.warnings.map((warning) => <p key={warning} className="csv-warning">{warning}</p>)}<Table><TableHeader><TableRow><TableHead>First five readings · IST</TableHead><TableHead>Consumption ({preview.unit})</TableHead></TableRow></TableHeader><TableBody>{preview.readings.map((row) => <TableRow key={row.recordedAt}><TableCell>{new Date(row.recordedAt).toLocaleString("en-IN", {timeZone:"Asia/Kolkata"})}</TableCell><TableCell>{row.value}</TableCell></TableRow>)}</TableBody></Table><button type="button" onClick={() => void save()} disabled={busy}><Check size={16}/>Use these readings</button><small>Changes the active {preview.resource.startsWith("energy") ? "energy" : "water"} dataset. Previous imports are kept.</small></div>}
+      {preview && <div className="csv-preview"><div><b>{preview.building}</b><span>{preview.rowCount} hours · {preview.completeDays} complete days · {preview.unit}</span></div><p>{new Date(preview.start).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})} – {new Date(preview.end).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})}</p>{preview.warnings.map((warning) => <p key={warning} className="csv-warning">{warning}</p>)}<Table><TableHeader><TableRow><TableHead>First five readings · IST</TableHead><TableHead>Consumption ({preview.unit})</TableHead></TableRow></TableHeader><TableBody>{preview.readings.map((row) => <TableRow key={row.recordedAt}><TableCell>{new Date(row.recordedAt).toLocaleString("en-IN", {timeZone:"Asia/Kolkata"})}</TableCell><TableCell>{row.value}</TableCell></TableRow>)}</TableBody></Table><button type="button" onClick={() => void save()} disabled={busy}><Check size={16}/>Use these readings</button><small>Replaces only {preview.building}'s {preview.resource.startsWith("energy") ? "energy" : "water"} dataset. Other buildings and earlier imports are kept.</small></div>}
     </div>}
     {saved && <p role="status" className="csv-success">{saved}</p>}
   </section>;

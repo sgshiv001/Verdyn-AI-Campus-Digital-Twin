@@ -1,5 +1,6 @@
 import { getD1 } from "@/db";
-import { analyzeCampus, backtestResource, type HourlyReading } from "@/lib/campus-analytics";
+import type { HourlyReading } from "@/lib/campus-analytics";
+import { buildingAnalytics } from "@/lib/campus-buildings";
 import { ensureIndiaSample, getActiveImports } from "@/lib/campus-imports";
 
 const stamp = "2026-09-29T00:00:00.000Z";
@@ -51,7 +52,7 @@ async function seedHistoricalReadings() {
   }
 }
 
-export async function getCampusAnalytics() {
+export async function getCampusAnalytics(building?: string) {
   const db = getD1();
   await ensureIndiaSample();
   await seedHistoricalReadings();
@@ -62,28 +63,9 @@ export async function getCampusAnalytics() {
   const result = await db.prepare(
     "SELECT resource, building, recorded_at AS recordedAt, value, unit, source FROM campus_readings WHERE resource IN (?, ?) AND recorded_at >= ? ORDER BY recorded_at",
   ).bind("energy_hourly_kwh", "water_hourly_kl", earliest.toISOString()).all<HourlyReading>();
-  const importedResources = new Set(imported.datasets.map((dataset) => dataset.resource));
-  const readings = [...(result.results ?? []).filter((r) => !importedResources.has(r.resource)), ...imported.readings];
-  const analytics = analyzeCampus(readings);
-  return {
-    ...analytics,
-    datasets: imported.datasets,
-    evaluation: {
-      energy: backtestResource(readings.filter((r) => r.resource === "energy_hourly_kwh"), importedResources.has("energy_hourly_kwh") ? "Asia/Kolkata" : "UTC"),
-      water: backtestResource(readings.filter((r) => r.resource === "water_hourly_kl"), importedResources.has("water_hourly_kl") ? "Asia/Kolkata" : "UTC"),
-    },
-    latestReadings: {
-      energy: latestDayReadings(readings.filter((r) => r.resource === "energy_hourly_kwh"), analytics.forecasts.energy),
-      water: latestDayReadings(readings.filter((r) => r.resource === "water_hourly_kl"), analytics.forecasts.water),
-    },
-  };
-}
-
-function latestDayReadings(readings: HourlyReading[], forecast: ReturnType<typeof analyzeCampus>["forecasts"]["energy"]) {
-  const timeZone = forecast?.timeZone ?? (readings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
-  const dayOf = (r: HourlyReading) => new Date(Date.parse(r.recordedAt) + (timeZone === "Asia/Kolkata" ? 330 * 60_000 : 0)).toISOString().slice(0, 10);
-  const day = forecast?.analysisDay ?? readings.map(dayOf).sort().at(-1);
-  return readings.filter((r) => dayOf(r) === day);
+  const pairs = new Set(imported.datasets.map((dataset) => JSON.stringify([dataset.resource, dataset.building])));
+  const readings = [...(result.results ?? []).filter((r) => !pairs.has(JSON.stringify([r.resource, r.building]))), ...imported.readings];
+  return buildingAnalytics(readings, imported.datasets, building);
 }
 
 export async function seedCampusData() {
@@ -142,41 +124,35 @@ export async function seedCampusData() {
   await db.batch(statements);
 }
 
-export async function getCampusOverview() {
+export async function getCampusOverview(building?: string) {
   const db = getD1();
   await seedCampusData();
-  const analytics = await getCampusAnalytics();
-  const [metricResult, energyResult, waterResult, recommendationResult] = await db.batch([
+  const analytics = await getCampusAnalytics(building);
+  const [metricResult, recommendationResult] = await db.batch([
     db.prepare("SELECT id, label, value, unit, change_text, trend, accent FROM campus_metrics ORDER BY id"),
-    db.prepare("SELECT value FROM campus_readings WHERE resource = ? ORDER BY recorded_at").bind("energy"),
-    db.prepare("SELECT value FROM campus_readings WHERE resource = ? ORDER BY recorded_at").bind("water"),
     db.prepare("SELECT id, title, detail, impact, tag, tone, category, status FROM campus_recommendations ORDER BY id"),
   ]);
   const recommendations = rows(recommendationResult);
   const isOptimized = recommendations.some((item) => item.id === "hvac" && item.status === "active");
-  const importedEnergy = analytics.datasets.find((item) => item.resource === "energy_hourly_kwh");
   const metrics = rows(metricResult);
-  if (importedEnergy && analytics.latestReadings.energy.length) {
-    const energyMetric = metrics.find((item) => item.id === "energy");
-    if (energyMetric) Object.assign(energyMetric, {
-      label: "Building energy", value: Number(analytics.latestReadings.energy.reduce((sum, r) => sum + r.value, 0).toFixed(1)), unit: "kWh",
-      change_text: analytics.forecasts.energy ? `${analytics.forecasts.energy.analysisDay} · historical` : "CSV · limited history", trend: "neutral",
+  for (const resource of ["energy", "water"] as const) {
+    const values = analytics.latestReadings[resource], source = analytics.resources[resource];
+    const metric = metrics.find((item) => item.id === resource);
+    if (metric) Object.assign(metric, {
+      label: `Building ${resource}`, unit: resource === "energy" ? "kWh" : "kL", trend: "neutral",
+      value: values.length ? Number(values.reduce((sum, reading) => sum + reading.value, 0).toFixed(2)) : null,
+      change_text: !source ? "No readings connected" : !values.length ? "No complete day" : `${analytics.analysisDays[resource]} · ${source === "simulated" ? "Demo" : source.includes("COMBED") ? "historical" : "CSV"}`,
     });
   }
-  const importedWater = analytics.datasets.find((item) => item.resource === "water_hourly_kl");
-  if (importedWater && analytics.latestReadings.water.length) {
-    const waterMetric = metrics.find((item) => item.id === "water");
-    if (waterMetric) Object.assign(waterMetric, { label: "Building water", value: Number(analytics.latestReadings.water.reduce((sum, r) => sum + r.value, 0).toFixed(2)), unit: "kL", change_text: analytics.forecasts.water ? `${analytics.forecasts.water.analysisDay} · CSV` : "CSV · limited history", trend: "neutral" });
-  }
-  metrics.filter((item) => item.id !== "energy" && !(item.id === "water" && importedWater)).forEach((item) => { item.change_text = "Demo · " + item.change_text; });
+  metrics.filter((item) => item.id !== "energy" && item.id !== "water").forEach((item) => { item.change_text = "Demo · " + item.change_text; });
 
   return {
     score: isOptimized ? 87 : 82,
     optimized: isOptimized,
     metrics,
     series: {
-      energy: importedEnergy ? analytics.latestReadings.energy.map((r) => r.value) : rows(energyResult).map((item) => Number(item.value)),
-      water: importedWater ? analytics.latestReadings.water.map((r) => r.value) : rows(waterResult).map((item) => Number(item.value)),
+      energy: analytics.latestReadings.energy.map((r) => r.value),
+      water: analytics.latestReadings.water.map((r) => r.value),
     },
     alerts: analytics.anomalies,
     analytics,
@@ -186,12 +162,14 @@ export async function getCampusOverview() {
   };
 }
 
-export async function activateEfficiencyScenario() {
+export async function activateEfficiencyScenario(building?: string) {
   const db = getD1();
+  // Validate the building before changing the campus-wide demo scenario.
+  await getCampusAnalytics(building);
   await seedCampusData();
   await db.prepare("UPDATE campus_recommendations SET status = ?, updated_at = ? WHERE id = ?")
     .bind("active", new Date().toISOString(), "hvac").run();
-  return getCampusOverview();
+  return getCampusOverview(building);
 }
 
 export async function planRecommendation(id: string) {

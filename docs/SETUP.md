@@ -17,6 +17,8 @@ For a **fresh local database only**, apply these migrations in order:
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_outstanding_maggott.sql
 
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_nervous_agent_brand.sql
+
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_multi_building_datasets.sql
 ```
 
 These commands use local D1 emulation, not a production database. Do not replay migrations already applied to an existing database. Local records persist in `.wrangler/state`.
@@ -32,7 +34,7 @@ Open the URL printed by the server, normally `http://localhost:5173/`. The first
 ## Tests
 
 ```sh
-node --experimental-strip-types --test tests/campus-analytics.test.mjs tests/campus-csv.test.mjs
+node --experimental-strip-types --test tests/campus-analytics.test.mjs tests/campus-csv.test.mjs tests/campus-buildings.test.mjs
 node node_modules/typescript/bin/tsc --noEmit --incremental false
 ```
 

@@ -11,6 +11,7 @@ A sustainability dashboard for exploring campus resource use, spotting unusual c
 - Energy, water, transport, waste, and carbon overview.
 - Hourly forecasts and unusual-consumption alerts.
 - CSV upload with validation and persistent storage.
+- Building selector and dated energy/water comparisons.
 - Sustainability action planning and demo efficiency scenarios.
 - Responsive desktop and mobile navigation.
 
