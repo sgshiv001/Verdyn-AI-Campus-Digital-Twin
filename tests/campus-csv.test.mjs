@@ -1,44 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { parseCampusCsv } from "../lib/campus-csv.ts";
 import { analyzeResource, backtestResource } from "../lib/campus-analytics.ts";
 
-const csv = readFileSync(new URL("../public/data/india-campus-energy.csv", import.meta.url), "utf8");
-const bundle = JSON.parse(readFileSync(new URL("../data/india-campus-energy.json", import.meta.url), "utf8"));
+// Fixtures are generated in memory, never shipped as sample files or app data.
 const header = "recorded_at,building,resource,value,unit\n";
-const row = "2014-06-03T00:00:00+05:30,Block A,energy,10,kWh\n";
+const row = "2024-01-01T00:00:00+05:30,Block A,energy,10,kWh\n";
+const csv = header + Array.from({length: 96}, (_, i) =>
+  `2024-01-${String(1 + Math.floor(i / 24)).padStart(2, "0")}T${String(i % 24).padStart(2, "0")}:00:00+05:30,Block A,energy,10,kWh`).join("\n");
 
-test("Indian CSV provenance matches the downloadable and server sample", () => {
-  assert.equal(csv, bundle.csv);
-  assert.equal(createHash("sha256").update(csv).digest("hex"), bundle.metadata.sampleCsvSha256);
-  const result = parseCampusCsv(csv, "COMBED");
-  assert.equal(result.rowCount, 504);
-  assert.equal(result.completeDays, 21);
-  assert.equal(result.missingHours, 24);
-  assert.equal(result.readings[0].value, 33.7659);
-  assert.equal(result.start, "2014-06-02T18:30:00.000Z");
+test("user CSV parsing preserves values and reports its own coverage", () => {
+  const result = parseCampusCsv(csv, "User upload");
+  assert.equal(result.rowCount, 96);
+  assert.equal(result.completeDays, 4);
+  assert.equal(result.missingHours, 0);
+  assert.equal(result.readings[0].value, 10);
+  assert.equal(result.start, "2023-12-31T18:30:00.000Z");
+  assert.throws(() => parseCampusCsv(header), /rows|reading/i);
 });
 
-test("historical forecasts retain original dates and Indian day boundaries", () => {
-  const readings = parseCampusCsv(csv, "COMBED").readings;
-  const result = analyzeResource(readings, "Asia/Kolkata");
-  assert.equal(result.forecast.analysisDay, "2014-06-24");
-  assert.equal(result.forecast.points[0].recordedAt, "2014-06-24T18:30:00.000Z");
+test("uploaded forecasts retain file dates and Indian day boundaries", () => {
+  const result = analyzeResource(parseCampusCsv(csv).readings, "Asia/Kolkata");
+  assert.equal(result.forecast.analysisDay, "2024-01-04");
+  assert.equal(result.forecast.points[0].recordedAt, "2024-01-04T18:30:00.000Z");
   assert.equal(result.forecast.points.length, 24);
-  assert.equal(result.forecast.historicalDays, 20);
-  assert.equal(result.forecast.total, 685.6);
+  assert.equal(result.forecast.historicalDays, 3);
+  assert.equal(result.forecast.total, 240);
   assert.ok(result.forecast.points.every((p) => p.lower >= 0 && p.lower <= p.value && p.value <= p.upper));
 });
 
-test("walk-forward forecast evaluation on 168 unseen Indian hours", () => {
-  const result = backtestResource(parseCampusCsv(csv).readings);
-  assert.equal(result.testHours, 168);
-  assert.equal(result.testDays, 7);
-  assert.equal(result.startDay, "2014-06-18");
-  assert.equal(result.mae, 5.6);
-  assert.equal(result.wapePercent, 18.7);
+test("forecast validation measures only uploaded held-out hours", () => {
+  const result = backtestResource(parseCampusCsv(csv).readings, "Asia/Kolkata");
+  assert.equal(result.testHours, 24);
+  assert.equal(result.testDays, 1);
+  assert.equal(result.startDay, "2024-01-04");
+  assert.equal(result.mae, 0);
+  assert.equal(result.wapePercent, 0);
 });
 
 test("chronological evaluation excludes the day being predicted", () => {
@@ -61,8 +58,8 @@ test("quoted building names, BOM and CRLF are accepted", () => {
 });
 
 test("bad values, units, dates and implicit timezones are rejected", () => {
-  for (const bad of [row.replace(",10,", ",-1,"), row.replace(",10,", ",,"), row.replace("kWh", "W"), row.replace("+05:30", ""), row.replace("2014-06-03", "2014-02-30"), row.replace("00:00:00", "00:15:00")]) assert.throws(() => parseCampusCsv(header + bad));
-  assert.throws(() => parseCampusCsv("date,value\n2014-06-03,10"), /headers/);
+  for (const bad of [row.replace(",10,", ",-1,"), row.replace(",10,", ",,"), row.replace("kWh", "W"), row.replace("+05:30", ""), row.replace("2024-01-01", "2024-02-30"), row.replace("00:00:00", "00:15:00")]) assert.throws(() => parseCampusCsv(header + bad));
+  assert.throws(() => parseCampusCsv("date,value\n2024-01-01,10"), /headers/);
   assert.throws(() => parseCampusCsv("x".repeat(512_001)), /smaller/);
 });
 

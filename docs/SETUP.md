@@ -29,7 +29,7 @@ These commands use local D1 emulation, not a production database. Do not replay 
 npm run dev
 ```
 
-Open the URL printed by the server, normally `http://localhost:5173/`. The first successful dashboard request loads the bundled energy sample and seeds demo records. Stop with **Ctrl+C**.
+Open the URL printed by the server, normally `http://localhost:5173/`. A fresh database opens on the CSV uploader with no readings. Existing user uploads remain saved; only the previous app-owned sample and seeded demo records are removed. Stop with **Ctrl+C**.
 
 ## Tests
 
@@ -56,4 +56,4 @@ This previews the built Worker locally; it does not deploy the app. Pushing to G
 - **Port busy:** stop the existing server or use `npm run dev -- --port 5174`.
 - **Hosted dashboard inaccessible:** hosted access is restricted separately from GitHub visibility.
 
-Keep credentials, private campus records, and `.env` files out of version control. See [dataset documentation](../data/README.md) for CSV and sample details.
+Keep credentials, private campus records, and `.env` files out of version control. See [CSV documentation](../data/README.md) for the required upload format.

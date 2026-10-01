@@ -6,14 +6,14 @@ function history({ energySpike = true, waterSpike = true } = {}) {
   const readings = [];
   for (let day = 1; day <= 8; day++) {
     for (let hour = 0; hour < 24; hour++) {
-      const recordedAt = `2026-09-${String(day + 10).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`;
+      const recordedAt = new Date(`2026-09-${String(day + 10).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00+05:30`).toISOString();
       readings.push({
         resource: "energy_hourly_kwh",
         building: "Main Campus",
         recordedAt,
         value: 500 + hour * 10 + (day === 8 && hour === 14 && energySpike ? 400 : 0),
         unit: "kWh",
-        source: "simulated",
+        source: "test fixture · unverified",
       });
       readings.push({
         resource: "water_hourly_kl",
@@ -21,7 +21,7 @@ function history({ energySpike = true, waterSpike = true } = {}) {
         recordedAt,
         value: 1 + hour * 0.1 + (day === 8 && hour === 2 && waterSpike ? 1.3 : 0),
         unit: "kL",
-        source: "simulated",
+        source: "test fixture · unverified",
       });
     }
   }

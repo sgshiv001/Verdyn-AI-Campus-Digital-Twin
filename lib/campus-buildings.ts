@@ -1,7 +1,7 @@
 import { analyzeCampus, backtestResource, type HourlyReading } from "./campus-analytics.ts";
 import type { DatasetInfo } from "./campus-import-store.ts";
 
-export type BuildingInfo = { name: string; isDemo: boolean; resources: string[] };
+export type BuildingInfo = { name: string; resources: string[] };
 export type ComparisonBuilding = { building: string; source: string; days: { day: string; total: number }[] };
 export type BuildingComparisons = { energy: ComparisonBuilding[]; water: ComparisonBuilding[] };
 export class BuildingNotFoundError extends Error {}
@@ -30,18 +30,18 @@ export function comparisonForDay(entries: ComparisonBuilding[], requestedDay = "
 
 export function buildingAnalytics(readings: HourlyReading[], datasets: DatasetInfo[], requestedBuilding?: string) {
   const names = [...new Set([...readings.map((reading) => reading.building), ...datasets.map((dataset) => dataset.building)])].sort();
+  if (!names.length) return null;
   const selectedBuilding = requestedBuilding || datasets.find((dataset) => dataset.resource === "energy_hourly_kwh")?.building || names[0];
   if (!selectedBuilding || !names.includes(selectedBuilding)) throw new BuildingNotFoundError("This building is not available. Choose a connected building.");
   const selected = readings.filter((reading) => reading.building === selectedBuilding);
   const analysis = analyzeCampus(selected);
   const forResource = (resource: HourlyReading["resource"]) => selected.filter((reading) => reading.resource === resource);
-  const timeZone = (values: HourlyReading[]) => values[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata";
+  const timeZone = (_values: HourlyReading[]) => "Asia/Kolkata";
   const latest = (values: HourlyReading[]) => {
     const day = completeDailyTotals(values, timeZone(values)).at(-1)?.day;
     return day ? values.filter((reading) => localDay(reading, timeZone(values)) === day) : [];
   };
   const buildings: BuildingInfo[] = names.map((name) => ({name,
-    isDemo: !datasets.some((dataset) => dataset.building === name),
     resources: [...new Set(readings.filter((reading) => reading.building === name).map((reading) => reading.resource))],
   }));
   const comparisons = (resource: HourlyReading["resource"]) => datasets.filter((dataset) => dataset.resource === resource).map((dataset) => ({

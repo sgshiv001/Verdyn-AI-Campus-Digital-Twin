@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { saveBuildingImport, loadBuildingImports, restoreLegacyBuildingImports } from "../lib/campus-import-store.ts";
 import { buildingAnalytics, comparisonForDay, BuildingNotFoundError } from "../lib/campus-buildings.ts";
+import { removeAppFixtures } from "../lib/campus-fixtures.ts";
+import { uploadOverview, readingReviewActions } from "../lib/campus-overview.ts";
 
 // Exercise the production prepared SQL against SQLite, with D1-style bindings.
 class LocalD1 {
@@ -39,6 +41,67 @@ class LocalD1 {
 }
 const csv = (building, value, resource = "energy", start = 1) => "recorded_at,building,resource,value,unit\n" + Array.from({length: 96}, (_, i) => `2026-09-${String(start + Math.floor(i / 24)).padStart(2, "0")}T${String(i % 24).padStart(2, "0")}:00:00+05:30,${building},${resource},${value},${resource === "energy" ? "kWh" : "kL"}`).join("\n");
 const save = (db, building, value, resource = "energy", start = 1) => saveBuildingImport(db, csv(building, value, resource, start), building, "test fixture · unverified");
+
+test("a fresh app has no generated readings, forecasts, totals or actions", async () => {
+  const analytics = buildingAnalytics([], []);
+  const overview = uploadOverview(analytics, []);
+  assert.equal(analytics, null);
+  assert.equal(overview.status, "empty");
+  assert.equal(overview.summaries.energy.total, null);
+  assert.equal(overview.summaries.water.total, null);
+  assert.equal(overview.coveragePercent, null);
+  assert.equal(overview.rowCount, 0);
+  assert.deepEqual(overview.series, {energy: [], water: []});
+  assert.deepEqual(await readingReviewActions(overview.alerts), []);
+});
+
+test("overview uses uploaded totals, preserves zero, and never fills a missing resource", async () => {
+  const db = new LocalD1();
+  try {
+    await save(db, "Academic", 0); await save(db, "Library", 9);
+    const loaded = await loadBuildingImports(db);
+    const overview = uploadOverview(buildingAnalytics(loaded.readings, loaded.datasets, "Academic"), loaded.readings);
+    assert.equal(overview.summaries.energy.total, 0);
+    assert.equal(overview.summaries.water.total, null);
+    assert.equal(overview.rowCount, 96);
+    assert.equal(overview.coveragePercent, 100);
+    assert.equal(overview.summaries.energy.completeDays, 4);
+    assert.deepEqual(overview.series.energy, Array(24).fill(0));
+    assert.deepEqual(overview.series.water, []);
+  } finally { db.close(); }
+});
+
+test("fixture cleanup is idempotent and preserves independently uploaded readings", async () => {
+  const db = new LocalD1();
+  try {
+    const uploaded = await save(db, "IIIT-Delhi Academic Block", 7);
+    await save(db, "Science Block", 1, "water");
+    const sampleId = "04766a873aa39e1e03354f08cfbeb9fa54243f59782a928d817414b3ec03df9a";
+    db.db.prepare("INSERT INTO campus_imports (id,name,resource,building,source,row_count,missing_hours,start_at,end_at,status,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(sampleId,"Old sample","energy_hourly_kwh","IIIT-Delhi Academic Block","COMBED · historical measured power",1,0,"2024-01-01","2024-01-01","ready",0,"2024-01-01");
+    db.db.prepare("INSERT INTO campus_import_readings (import_id,recorded_at,value) VALUES (?,?,?)").run(sampleId,"2024-01-01T00:00:00Z",1);
+    db.db.prepare("INSERT INTO campus_readings (recorded_at,resource,building,value,unit,source) VALUES (?,?,?,?,?,?)")
+      .run("2024-01-01T00:00:00Z","water_hourly_kl","Science Block",1,"kL","simulated");
+    db.db.prepare("INSERT INTO campus_readings (recorded_at,resource,building,value,unit,source) VALUES (?,?,?,?,?,?)")
+      .run("2024-01-01T01:00:00Z","water_hourly_kl","Science Block",2,"kL","user upload");
+    db.db.prepare("INSERT INTO campus_metrics VALUES (?,?,?,?,?,?,?,?)").run("carbon","Demo",1,"t","","down","lime","2026-09-29T00:00:00.000Z");
+    db.db.prepare("INSERT INTO campus_alerts VALUES (?,?,?,?,?,?,?)").run("water-flow","Demo","Demo","Science Block","high","open","2026-09-29T00:00:00.000Z");
+    db.db.prepare("INSERT INTO campus_recommendations VALUES (?,?,?,?,?,?,?,?,?)").run("hvac","Delay Library HVAC start","Demo","Demo","Demo","lime","energy","new","2026-09-29T00:00:00.000Z");
+    db.db.prepare("INSERT INTO campus_recommendations VALUES (?,?,?,?,?,?,?,?,?)").run("user-review","User action","User","Review","CSV","lime","energy","planned","2026-09-29T00:00:00.000Z");
+    await removeAppFixtures(db); await removeAppFixtures(db);
+    const loaded = await loadBuildingImports(db);
+    assert.equal(loaded.datasets.length, 2);
+    assert(loaded.datasets.some((dataset) => dataset.id === uploaded.id));
+    assert.equal(loaded.readings.length, 192);
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_imports WHERE id = ?").get(sampleId).count, 0);
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_import_readings WHERE import_id = ?").get(sampleId).count, 0);
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_readings").get().count, 1);
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_metrics").get().count, 0);
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_alerts").get().count, 0);
+    assert.equal(db.db.prepare("SELECT status FROM campus_recommendations WHERE id = 'user-review'").get().status, "planned");
+    assert.equal(db.db.prepare("SELECT COUNT(*) AS count FROM campus_recommendations").get().count, 1);
+  } finally { db.close(); }
+});
 
 test("different buildings and resources retain independent active datasets", async () => {
   const db = new LocalD1();

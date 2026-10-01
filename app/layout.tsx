@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CampusOS | AI Sustainable Campus",
-  description: "A digital twin workspace for sustainable campus operations.",
+  title: "Verdyn | Campus CSV Analytics",
+  description: "Upload campus energy and water readings to generate consumption analytics, forecasts, and review actions.",
   other: { "codex-preview": "development" },
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };

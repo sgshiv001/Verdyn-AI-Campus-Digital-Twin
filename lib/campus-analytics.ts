@@ -157,8 +157,8 @@ export function analyzeResource(readings: HourlyReading[], timeZone = "UTC"): { 
 export function analyzeCampus(readings: HourlyReading[]) {
   const energyReadings = readings.filter((reading) => reading.resource === "energy_hourly_kwh");
   const waterReadings = readings.filter((reading) => reading.resource === "water_hourly_kl");
-  const energy = analyzeResource(energyReadings, energyReadings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
-  const water = analyzeResource(waterReadings, waterReadings[0]?.source === "simulated" ? "UTC" : "Asia/Kolkata");
+  const energy = analyzeResource(energyReadings, "Asia/Kolkata");
+  const water = analyzeResource(waterReadings, "Asia/Kolkata");
   return {
     dataSource: [energyReadings[0]?.source, waterReadings[0]?.source].filter(Boolean).join(" / "),
     forecasts: { energy: energy.forecast, water: water.forecast },
