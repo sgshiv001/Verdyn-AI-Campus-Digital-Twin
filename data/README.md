@@ -12,9 +12,11 @@ recorded_at,building,resource,value,unit
 - Timestamps need an explicit timezone and must align to the hour in IST. Use `YYYY-MM-DDTHH:00:00+05:30`.
 - Up to 3,000 rows and 500 KB per file. No missing values.
 
-Preview and validate the file before choosing **Use these readings**. Identical duplicates are skipped; conflicting duplicates are rejected. Missing hours are reported, never filled.
+Select one or more CSV files and review each preview before importing. Validation and save errors appear beside the affected file. Successfully saved files are kept when another file fails, and failed saves can be retried. Identical duplicate rows are skipped; conflicting duplicates are rejected. Missing hours are reported, never filled.
 
 Each building/resource keeps its own active dataset. A new upload replaces only that pair; other buildings and earlier imports remain saved.
+
+When selected files share a building/resource, the last successfully saved file in the displayed list becomes active.
 
 Totals use your uploaded rows; daily charts and comparisons use complete IST days. Four complete days enable median-baseline forecasts and unusual-usage checks. Predictions follow the latest complete day in the file, not today's date. Forecast validation uses earlier readings only and does not guarantee future accuracy.
 
