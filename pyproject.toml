@@ -1,0 +1,9 @@
+[project]
+name = "verdyn"
+version = "2.0.0"
+description = "Demo-first AI campus resource management dashboard"
+requires-python = ">=3.11"
+dependencies = ["fastapi==0.115.6", "uvicorn[standard]==0.34.0", "python-multipart==0.0.20"]
+
+[tool.uv]
+dev-dependencies = []

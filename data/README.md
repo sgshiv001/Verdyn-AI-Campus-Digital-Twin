@@ -1,23 +1,16 @@
-# Your campus CSV
+# Verdyn data
 
-The app starts empty. Upload your own file using these exact headers:
+`demo/` contains the supplied simulated archive used by default in the live demo. It is labeled `SIMULATED_DEMO_NOT_MEASURED` and must not be presented as live campus data.
 
-```csv
-recorded_at,building,resource,value,unit
-```
+`uploads/` is created automatically when a CSV is imported through `/imports`. Uploaded files are local runtime data and are ignored by Git.
 
-- One building and one resource per file.
-- Energy: `resource=energy`, `unit=kWh`; water: `resource=water`, `unit=kL`.
-- Values are non-negative **hourly consumption**, not cumulative meter readings or instantaneous power.
-- Timestamps need an explicit timezone and must align to the hour in IST. Use `YYYY-MM-DDTHH:00:00+05:30`.
-- Up to 3,000 rows and 500 KB per file. No missing values.
+## Accepted upload columns
 
-Select one or more CSV files and review each preview before importing. Validation and save errors appear beside the affected file. Successfully saved files are kept when another file fails, and failed saves can be retried. Identical duplicate rows are skipped; conflicting duplicates are rejected. Missing hours are reported, never filled.
+Verdyn accepts one CSV with a timestamp, building, and at least one resource column:
 
-Each building/resource keeps its own active dataset. A new upload replaces only that pair; other buildings and earlier imports remain saved.
+- Timestamp: `timestamp_local`, `timestamp`, `recorded_at`, or `datetime`
+- Building: `building_name`, `building`, `building_id`, or `site`
+- Energy: `electricity_kwh`, `energy_kwh`, `energy`, or `kwh`
+- Water: `water_liters`, `water_kl`, `water`, or `kl`
 
-When selected files share a building/resource, the last successfully saved file in the displayed list becomes active.
-
-Totals use your uploaded rows; daily charts and comparisons use complete IST days. Four complete days enable median-baseline forecasts and unusual-usage checks. Predictions follow the latest complete day in the file, not today's date. Forecast validation uses earlier readings only and does not guarantee future accuracy.
-
-Upload source claims are unverified. No demo data, carbon figures, sustainability scores, or estimated savings are generated.
+Water values are interpreted as liters when the column contains `liter`; otherwise they are treated as kL.

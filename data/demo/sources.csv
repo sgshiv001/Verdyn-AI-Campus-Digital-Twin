@@ -1,0 +1,2 @@
+source_dataset,description,measured,real_data_alternative
+SIMULATED_DEMO_NOT_MEASURED,Generated for software testing only; all meter readings and building identities are fictional,False,https://www.kaggle.com/datasets/cdaclab/unicon
