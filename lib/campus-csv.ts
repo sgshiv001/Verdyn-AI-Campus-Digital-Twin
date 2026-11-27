@@ -21,7 +21,7 @@ export type CsvPreview = {
 };
 
 // Quoted fields, escaped quotes, CRLF and a UTF-8 BOM are accepted.
-function csvRows(text: string): string[][] {
+function csvRows(text: string, delimiter = ","): string[][] {
   const rows: string[][] = [];
   let row: string[] = [], field = "", quoted = false;
   for (let i = 0; i < text.length; i++) {
@@ -30,7 +30,7 @@ function csvRows(text: string): string[][] {
       if (quoted && text[i + 1] === '"') { field += '"'; i++; }
       else if (quoted || field.trim() === "") quoted = !quoted;
       else throw new Error("A quote appears inside an unquoted CSV field.");
-    } else if (char === "," && !quoted) { row.push(field.trim()); field = ""; }
+    } else if (char === delimiter && !quoted) { row.push(field.trim()); field = ""; }
     else if ((char === "\n" || char === "\r") && !quoted) {
       if (char === "\r" && text[i + 1] === "\n") i++;
       row.push(field.trim());
@@ -124,27 +124,85 @@ function litersToKiloliters(value: string) {
   return digits.slice(0, -3) + "." + digits.slice(-3) + fraction;
 }
 
-export function prepareCampusUpload(text: string): UploadDataset[] {
+function getCsvFormat(text: string) {
+  const content = text.trimStart();
+  const directive = content.match(/^sep=([,;\t])\r?\n/i);
+  if (directive) return {content: content.slice(directive[0].length), delimiter: directive[1]};
+  const header = content.split(/[\r\n]/, 1)[0];
+  const counts: Record<string, number> = {",": 0, ";": 0, "\t": 0};
+  let quoted = false;
+  for (const char of header) {
+    if (char === '"') quoted = !quoted;
+    else if (!quoted && Object.hasOwn(counts, char)) counts[char]++;
+  }
+  const [delimiter] = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  return {content, delimiter};
+}
+
+function uploadTimestamp(value: string) {
+  const timestamp = value.replace(/\s+(?=\d{1,2}:)/, "T").replace(/\s+(?=[+-]\d{2}:?\d{2}$)/, "");
+  const parts = timestamp.match(/^(\d{4}-\d{2}-\d{2})T(\d{1,2})(:\d{2})(:\d{2}(?:\.000)?)?(Z|[+-]\d{2}:?\d{2})?$/i);
+  if (!parts) return timestamp;
+  const [, day, hour, minute, seconds = ":00", zone = ""] = parts;
+  const offset = zone.toUpperCase().replace(/^([+-]\d{2})(\d{2})$/, "$1:$2");
+  return day + "T" + hour.padStart(2, "0") + minute + seconds + (offset || "+05:30");
+}
+
+export function prepareCampusUpload(text: string, fallbackBuilding = ""): UploadDataset[] {
   if (new TextEncoder().encode(text).length > MAX_UPLOAD_BYTES) throw new Error("Choose a CSV up to 10 MB.");
-  const rows = csvRows(text.replace(/^\uFEFF/, ""));
-  const header = rows.shift()?.map((column) => column.toLowerCase()) ?? [];
+  const {content, delimiter} = getCsvFormat(text);
+  const rows = csvRows(content, delimiter);
+  const originalHeader = rows.shift() ?? [];
+  const header = originalHeader.map((column) => column.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
   if (new Set(header).size !== header.length) throw new Error("CSV headers must be unique.");
-  const canonical = columns.every((column) => header.includes(column));
-  const archive = ["timestamp_local", "building_id"].every((column) => header.includes(column))
-    && ["electricity_kwh", "water_liters"].some((column) => header.includes(column));
-  if (!canonical && !archive) throw new Error("CSV headers must include recorded_at, building, resource, value, unit, or match the Verdyn monthly archive.");
+  const find = (...names: string[]) => names.map((name) => header.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const timestampCol = find("recorded_at", "timestamp_local", "timestamp", "timestamp_ist", "datetime", "date_time", "date_time_ist", "reading_time");
+  const dateCol = find("date");
+  const timeCol = find("time", "hour");
+  const buildingCol = find("building", "building_name", "building_id", "site", "block");
+  const resourceCol = find("resource", "resource_type");
+  const valueCol = find("value", "reading", "consumption");
+  const unitCol = find("unit", "units");
+  const energyCol = find("electricity_kwh", "energy_kwh", "electricity_consumption_kwh", "energy_consumption_kwh", "consumption_kwh", "kwh", "energy");
+  const waterKLCol = find("water_kl", "water_consumption_kl", "kl", "water");
+  const waterLitersCol = find("water_liters", "water_litres", "water_l", "water_consumption_liters", "water_consumption_litres", "water_consumption_l");
+  const canonical = resourceCol >= 0 && valueCol >= 0 && unitCol >= 0;
+  const hasTimestamp = timestampCol >= 0 || (dateCol >= 0 && timeCol >= 0);
+  const hasReadings = canonical || energyCol >= 0 || waterKLCol >= 0 || waterLitersCol >= 0;
+  if (!hasTimestamp || !hasReadings) {
+    const metadata = header.includes("source_dataset") && (header.includes("description") || header.includes("site_id"));
+    if (metadata && !hasTimestamp && !hasReadings) {
+      throw new Error("This file contains metadata. Choose an hourly readings CSV, such as verdyn_2024-01.csv.");
+    }
+    const found = originalHeader.slice(0, 8).map((column) => column.slice(0, 40)).join(", ");
+    throw new Error("Expected a timestamp and hourly energy or water columns. Found " + (found || "no CSV headers") + ".");
+  }
+  const defaultBuilding = fallbackBuilding.trim();
+  if (buildingCol < 0 && !defaultBuilding) {
+    throw new Error("There is no building column. Enter a building name below, then select the file again.");
+  }
+  const sourceCol = find("source_dataset");
+  const energyMissingCol = find("electricity_missing", "energy_missing");
+  const waterMissingCol = find("water_missing");
   const groups = new Map<string, {label: string; rows: string[]}>();
 
   for (const [index, row] of rows.entries()) {
     if (row.length !== header.length) throw new Error(`Row ${index + 2}: column count does not match the header.`);
-    const get = (column: string) => row[header.indexOf(column)] ?? "";
-    const building = get(canonical ? "building" : "building_id");
-    const local = get("timestamp_local").replace(" ", "T");
-    const timestamp = canonical ? get("recorded_at") : /(?:Z|[+-]\d{2}:\d{2})$/.test(local) ? local : local + "+05:30";
-    const source = get("source_dataset");
-    const records = canonical ? [[get("resource"), get("value"), get("unit")]] : [
-      ["energy", get("electricity_missing") === "1" ? "" : get("electricity_kwh"), "kWh"],
-      ["water", get("water_missing") === "1" ? "" : litersToKiloliters(get("water_liters")), "kL"],
+    const get = (column: number) => row[column] ?? "";
+    const building = buildingCol < 0 ? defaultBuilding : get(buildingCol);
+    const dateTime = timestampCol >= 0 ? get(timestampCol) : get(dateCol) + " " + get(timeCol);
+    const timestamp = uploadTimestamp(dateTime);
+    const source = get(sourceCol);
+    const resourceName = get(resourceCol).toLowerCase();
+    const resource = resourceName === "electricity" ? "energy" : resourceName;
+    const unit = get(unitCol).toLowerCase();
+    const inLiters = resource === "water" && /^(l|liters?|litres?)$/.test(unit);
+    const canonicalValue = inLiters ? litersToKiloliters(get(valueCol)) : get(valueCol);
+    const canonicalUnit = unit === "kwh" ? "kWh" : (inLiters || unit === "kl") ? "kL" : get(unitCol);
+    const water = get(waterKLCol) || litersToKiloliters(get(waterLitersCol));
+    const records = canonical ? [[resource, canonicalValue, canonicalUnit]] : [
+      ["energy", get(energyMissingCol) === "1" ? "" : get(energyCol), "kWh"],
+      ["water", get(waterMissingCol) === "1" ? "" : water, "kL"],
     ];
     for (const [resource, value, unit] of records) {
       if (!canonical && !value) continue;

@@ -32,6 +32,9 @@
   cursor: pointer;
 }
 .csv-picker input:disabled + label { opacity: .65; cursor: wait; }
+.csv-building-field { display: grid; gap: .3rem; justify-items: start; }
+.csv-building-field input { width: min(100%, 24rem); border: 1px solid #aeb8dd; border-radius: .5rem; background: #fff; }
+.csv-building-field input:focus-visible { outline: 3px solid #437bd5; outline-offset: 2px; }
 .csv-picker span, .csv-progress { font-size: .875rem; color: #4a5777; }
 .csv-progress:empty, .csv-file-list:empty { display: none; }
 .csv-import summary { color: #244cbb; padding-block: .55rem; cursor: pointer; font-size: .875rem; font-weight: 700; }

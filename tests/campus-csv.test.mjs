@@ -7,6 +7,28 @@ import { analyzeResource, backtestResource } from "../lib/campus-analytics.ts";
 const header = "recorded_at,building,resource,value,unit\n";
 const row = "2024-01-01T00:00:00+05:30,Block A,energy,10,kWh\n";
 
+test("accepts meter column aliases, Excel separators, and an explicit building for single-meter files", () => {
+  const exportCsv = 'sep=;\r\n"Date/Time";"Building Name";"Energy (kWh)";"Water (Litres)";"Memo, text"\r\n'
+    + '2024-01-01 0:00;"Library; East";12.5;500;"quoted; text"\r\n';
+  const datasets = prepareCampusUpload(exportCsv);
+  assert.equal(datasets.length, 2);
+  assert.equal(datasets[0].preview.building, "Library; East");
+  assert.equal(datasets[0].preview.readings[0].value, 12.5);
+  assert.equal(datasets[1].preview.readings[0].value, 0.5);
+  assert.equal(datasets[1].preview.readings[0].recordedAt, "2023-12-31T18:30:00.000Z");
+
+  const single = "timestamp\tenergy_kwh\n2024-01-01T00:00:00+0530\t0\n";
+  assert.throws(() => prepareCampusUpload(single), /There is no building column/);
+  const [provided] = prepareCampusUpload(single, "Science Block");
+  assert.equal(provided.preview.building, "Science Block");
+  assert.equal(provided.preview.readings[0].value, 0);
+});
+
+test("reports the headers it found and identifies archive metadata files", () => {
+  assert.throws(() => prepareCampusUpload("Market,Price\nA,2\n"), /Found Market, Price/);
+  assert.throws(() => prepareCampusUpload("building_id,site_id,building_name,source_dataset\nB01,DEMO,Library,SIMULATED_DEMO_NOT_MEASURED\n"), /This file contains metadata/);
+});
+
 test("prepares a monthly archive larger than 500 KB with separate building and resource datasets", () => {
   const archiveHeader = "timestamp_local,site_id,building_id,electricity_kwh,water_liters,electricity_missing,water_missing,source_dataset\n";
   const rows = Array.from({length: 744}, (_, hour) => {

@@ -42,12 +42,24 @@ async function saveCsv(csv: string, name: string) {
   }
 }
 
+async function readCsv(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+  try {
+    return new TextDecoder(encoding, {fatal: true}).decode(bytes);
+  } catch {
+    throw new Error("Save the file as UTF-8 CSV and select it again.");
+  }
+}
+
 export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 0 }: {
   onImported: (building: string) => Promise<void>; alwaysOpen?: boolean; openRequest?: number;
 }) {
   const [files, setFiles] = useState<SelectedCsv[]>([]);
   const [phase, setPhase] = useState<"checking" | "saving" | "refreshing" | null>(null);
   const [error, setError] = useState("");
+  const [defaultBuilding, setDefaultBuilding] = useState("");
   const [expanded, setExpanded] = useState(alwaysOpen);
   const working = useRef(false);
   const panel = useRef<HTMLElement>(null);
@@ -70,8 +82,8 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
     try {
       for (const file of selected) {
         try {
-          if (file.size > MAX_UPLOAD_BYTES || !file.name.toLowerCase().endsWith(".csv")) throw new Error("Choose a .csv file up to 10 MB.");
-          const datasets = prepareCampusUpload(await file.text());
+          if (file.size > MAX_UPLOAD_BYTES || !/\.(csv|tsv)$/i.test(file.name)) throw new Error("Choose a CSV or TSV file up to 10 MB.");
+          const datasets = prepareCampusUpload(await readCsv(file), defaultBuilding);
           for (const dataset of datasets) {
             const entry = {id: next.length, name: file.name, label: datasets.length > 1 ? dataset.label : undefined};
             next.push("error" in dataset
@@ -153,7 +165,7 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
     </div>
     <div id="csv-import-body" className="csv-import__body" hidden={!expanded && !alwaysOpen}>
       <div className="csv-picker">
-        <input id="campus-csv" type="file" className="sr-only" accept=".csv,text/csv" multiple disabled={busy} aria-describedby="csv-limits" onChange={(event) => {
+        <input id="campus-csv" type="file" className="sr-only" accept=".csv,.tsv,text/csv,text/tab-separated-values" multiple disabled={busy} aria-describedby="csv-limits" onChange={(event) => {
         const selected = Array.from(event.target.files ?? []);
         event.target.value = "";
         void chooseFiles(selected);
@@ -161,11 +173,15 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
         <label htmlFor="campus-csv"><Upload size={16} aria-hidden="true"/>{files.length ? "Choose new files" : "Choose CSV files"}</label>
         <span id="csv-limits">Up to 10 MB per file and 3,000 readings per building and resource</span>
       </div>
+      <div className="csv-building-field">
+        <label htmlFor="csv-building">Building name (only for files without a building column)</label>
+        <input id="csv-building" type="text" maxLength={100} value={defaultBuilding} disabled={busy} onChange={(event) => setDefaultBuilding(event.target.value)} />
+      </div>
       <div className="csv-import-actions">
         <details><summary>CSV format</summary>
           <p><code>recorded_at, building, resource, value, unit</code></p>
-          <p>Use hourly IST timestamps with <code>+05:30</code> and enter energy in kWh or water in kL.</p>
-          <p>Monthly archives use <code>timestamp_local</code>, <code>building_id</code>, <code>electricity_kwh</code>, and <code>water_liters</code>.</p>
+          <p>Separate meter columns such as <code>energy_kwh</code>, <code>water_kl</code>, and <code>water_liters</code> also work.</p>
+          <p>Use hourly ISO timestamps. Timestamps without a timezone are interpreted as IST.</p>
         </details>
         <a href="/api/campus/template" download>Download CSV template</a>
       </div>
