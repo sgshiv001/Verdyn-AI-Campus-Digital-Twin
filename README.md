@@ -18,6 +18,10 @@ A campus dashboard generated from **your uploaded CSV files**. No sample data or
 
 Requires Node.js **22.13+** and npm.
 
+With Python installed, open `launch_dashboard.py` in VS Code and select **Run Python File**, or run `python launch_dashboard.py` from the terminal. The launcher builds the app, applies pending migrations to its local database, and opens the dashboard.
+
+For hot reload during development, follow the manual setup below.
+
 ```sh
 npm run install:ci
 npm run build

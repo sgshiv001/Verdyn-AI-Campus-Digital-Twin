@@ -6,11 +6,12 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { comparisonForDay, type BuildingComparisons } from "@/lib/campus-buildings";
 
-export function BuildingComparison({ comparisons, selectedBuilding, onSelect, busy }: {
-  comparisons: BuildingComparisons; selectedBuilding: string; onSelect: (building: string) => void; busy: boolean;
+export function BuildingComparison({ comparisons, selectedBuilding, onSelect, onOpenImport, busy }: {
+  comparisons: BuildingComparisons; selectedBuilding: string; onSelect: (building: string) => void; onOpenImport: () => void; busy: boolean;
 }) {
-  const [resource, setResource] = useState<"energy" | "water">("energy");
+  const [selectedResource, setResource] = useState<"energy" | "water" | null>(null);
   const [requestedDay, setRequestedDay] = useState("");
+  const resource = selectedResource ?? (comparisons.energy.length || !comparisons.water.length ? "energy" : "water");
   const comparison = comparisonForDay(comparisons[resource], requestedDay);
   const unit = resource === "energy" ? "kWh" : "kL";
   const max = Math.max(...comparison.rows.map((row) => row.reading?.total ?? 0), 1);
@@ -43,6 +44,6 @@ export function BuildingComparison({ comparisons, selectedBuilding, onSelect, bu
           <Building2 size={15}/>{row.building === selectedBuilding ? "Selected" : "View"}
         </button></TableCell>
       </TableRow>)}</TableBody>
-    </Table> : <div className="comparison-empty">No uploaded {resource} datasets yet. <a href="#csv-import">Import a building CSV</a></div>}
+    </Table> : <div className="comparison-empty">No uploaded {resource} datasets yet. <a href="#csv-import" onClick={onOpenImport}>Import a building CSV</a></div>}
   </section>;
 }

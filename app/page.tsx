@@ -36,16 +36,23 @@ export default function Home() {
   const [importRequest, setImportRequest] = useState(0);
   const [section, setSection] = useState<Section>("pulse");
   const [planning, setPlanning] = useState<string | null>(null);
-  const sequence = useRef(0);
+  const [requestedBuilding, setRequestedBuilding] = useState("");
+  const activeLoad = useRef<AbortController | null>(null);
+  const lastRequest = useRef({building: "", allowFallback: true});
   const loadOverview = useCallback(async (building = "", allowFallback = false) => {
-    const request = ++sequence.current;
+    activeLoad.current?.abort();
+    const request = new AbortController();
+    activeLoad.current = request;
+    lastRequest.current = {building, allowFallback};
+    setRequestedBuilding(building);
     setLoading(true); setError("");
     try {
-      let response = await fetch("/api/campus/overview" + (building ? "?building=" + encodeURIComponent(building) : ""));
-      if (response.status === 404 && allowFallback && building) response = await fetch("/api/campus/overview");
-      const next = await response.json() as Overview & {error?:string};
-      if (!response.ok) throw new Error(next.error || "Your saved readings could not be loaded.");
-      if (request !== sequence.current) return;
+      const options = {signal: AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]), cache: "no-store" as const};
+      let response = await fetch("/api/campus/overview" + (building ? "?building=" + encodeURIComponent(building) : ""), options);
+      if (response.status === 404 && allowFallback && building) response = await fetch("/api/campus/overview", options);
+      const next = await response.json().catch(() => null) as (Overview & {error?:string}) | null;
+      if (!response.ok || !next || (next.status !== "ready" && next.status !== "empty")) throw new Error(next?.error || "Your saved readings could not be loaded.");
+      if (activeLoad.current !== request || request.signal.aborted) return;
       setOverview(next);
       const url = new URL(window.location.href);
       if (next.analytics) url.searchParams.set("building", next.analytics.selectedBuilding);
@@ -53,13 +60,17 @@ export default function Home() {
       window.history.replaceState(window.history.state, "", url);
       setNotice(next.analytics ? "Showing " + next.analytics.selectedBuilding + "." : "");
     } catch (failure) {
-      if (request === sequence.current) setError(failure instanceof Error ? failure.message : "The data service is unavailable.");
-      throw failure;
-    } finally {if (request === sequence.current) setLoading(false);}
+      if (activeLoad.current !== request || request.signal.aborted) return;
+      const message = failure instanceof DOMException && failure.name === "TimeoutError"
+        ? "The dashboard took too long to load. Try again."
+        : failure instanceof Error ? failure.message : "The data service is unavailable.";
+      setError(message);
+      throw new Error(message);
+    } finally {if (activeLoad.current === request) setLoading(false);}
   }, []);
   useEffect(() => {
     void loadOverview(new URL(window.location.href).searchParams.get("building") || "", true).catch(() => undefined);
-    return () => {sequence.current++;};
+    return () => activeLoad.current?.abort();
   }, [loadOverview]);
   useEffect(() => {
     const sync = () => {
@@ -88,41 +99,49 @@ export default function Home() {
     finally {setPlanning(null);}
   };
   const analytics = overview?.analytics;
-  const retry = () => {void loadOverview(analytics?.selectedBuilding || "", true).catch(() => undefined);};
-  const imported = async (building:string) => {await loadOverview(building);};
-  const errorNotice = error && <p className="building-error" role="alert">{error} <button type="button" onClick={retry} disabled={loading}>Retry</button></p>;
+  const retry = () => {
+    const {building, allowFallback} = lastRequest.current;
+    void loadOverview(building, allowFallback).catch(() => undefined);
+  };
+  const openImporter = () => setImportRequest((current) => current + 1);
+  const errorNotice = error && <div className="building-error">
+    <p role="alert">{error}</p><button type="button" onClick={retry} disabled={loading}>Reload dashboard</button>
+  </div>;
 
-  if (!analytics || !overview) return <main className="csv-start csv-app">
+  const emptyHeader = <>
     <header className="csv-start__brand"><span className="atlas-mark"><Leaf size={20}/></span><div><b>Verdyn</b><span>Campus CSV analytics</span></div></header>
-    <section className="upload-intro"><p className="section-index">Your data / your campus</p><h1>Start with your CSV.</h1><p>Upload hourly energy or water consumption to generate your campus dashboard. No readings are pre-filled.</p></section>
-    {errorNotice}
+    <section className="upload-intro"><h1>Start with your CSV</h1><p>Upload hourly energy or water readings to see totals, compare buildings, and forecast usage.</p></section>
     {loading && <p className="upload-loading" role="status">Checking for your saved readings…</p>}
-    {!loading && <CampusCsvImport onImported={imported} alwaysOpen/>}
-    <Empty className="upload-help"><EmptyHeader><EmptyMedia><Activity size={24}/></EmptyMedia><EmptyTitle>Results appear after you import</EmptyTitle><EmptyDescription>Consumption totals and charts use your readings. Four complete days enable forecasts and unusual-usage checks. Add other buildings to compare them.</EmptyDescription></EmptyHeader></Empty>
-  </main>;
+  </>;
 
-  return <SidebarProvider defaultOpen><div className="atlas csv-app min-h-screen w-full">
-    <Sidebar collapsible="icon" className="atlas-sidebar hidden border-0 md:flex">
+  return <SidebarProvider defaultOpen><div className={analytics ? "atlas csv-app min-h-screen w-full" : "csv-start csv-app w-full"}>
+    {analytics && <Sidebar collapsible="icon" className="atlas-sidebar hidden border-0 md:flex">
       <SidebarHeader className="p-4 pt-5"><div className="flex items-center gap-3"><div className="atlas-mark"><Leaf size={19}/></div><div className="group-data-[collapsible=icon]:hidden"><b className="text-white">Verdyn</b><p>Campus analytics</p></div></div></SidebarHeader>
       <SidebarContent className="mt-7 px-3"><SidebarGroup><SidebarGroupLabel>Navigate</SidebarGroupLabel><SidebarGroupContent><nav aria-label="Campus sections"><SidebarMenu>{nav.map(([Icon,label,id]) => <SidebarMenuItem key={id}><SidebarMenuButton asChild tooltip={label} isActive={section === id}><a href={"#"+id} aria-current={section === id ? "location" : undefined} onClick={() => {setSection(id);setMenuOpen(false);}}><Icon size={17}/><span>{label}</span></a></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></nav></SidebarGroupContent></SidebarGroup></SidebarContent>
       <SidebarFooter className="p-3"><div className="atlas-side-status"><b>{analytics.buildings.length} uploaded buildings</b><span>Results from your CSV only</span></div></SidebarFooter>
-    </Sidebar>
-    <main className="atlas-main min-w-0 flex-1">
-      <header className="atlas-header"><button className="atlas-menu md:hidden" aria-label="Toggle navigation" aria-expanded={menuOpen} aria-controls="campus-mobile-navigation" onClick={() => setMenuOpen(!menuOpen)}><Menu size={20}/></button><div><p className="eyebrow">{analytics.selectedBuilding}</p><h1>Campus dashboard</h1></div><a className="upload-link" href="#csv-import" onClick={() => setImportRequest((current) => current + 1)}><Upload size={17}/>Import CSV</a></header>
-      <nav id="campus-mobile-navigation" className="atlas-mobile md:hidden" aria-label="Mobile campus sections" hidden={!menuOpen}>{nav.map(([,label,id]) => <a key={id} href={"#"+id} onClick={() => {setSection(id);setMenuOpen(false);}}>{label}</a>)}</nav>
-      <div className="building-toolbar" aria-busy={loading}><div><Building2 size={21}/><label htmlFor="campus-building">Selected building<NativeSelect id="campus-building" value={analytics.selectedBuilding} disabled={loading} onChange={(event) => chooseBuilding(event.target.value)}>{analytics.buildings.map((building) => <NativeSelectOption key={building.name} value={building.name}>{building.name}</NativeSelectOption>)}</NativeSelect></label></div><p role="status">{loading ? "Loading readings…" : "Forecasts and alerts stay separate for each building."}</p></div>
+    </Sidebar>}
+    <main className={analytics ? "atlas-main min-w-0 flex-1" : "csv-start__main"}>
+      {analytics ? <>
+        <header className="atlas-header"><button className="atlas-menu md:hidden" aria-label="Toggle navigation" aria-expanded={menuOpen} aria-controls="campus-mobile-navigation" onClick={() => setMenuOpen(!menuOpen)}><Menu size={20}/></button><div><p className="eyebrow">{analytics.selectedBuilding}</p><h1>Campus dashboard</h1></div><a className="upload-link" href="#csv-import" onClick={openImporter}><Upload size={17} aria-hidden="true"/>Import CSV</a></header>
+        <nav id="campus-mobile-navigation" className="atlas-mobile md:hidden" aria-label="Mobile campus sections" hidden={!menuOpen}>{nav.map(([,label,id]) => <a key={id} href={"#"+id} aria-current={section === id ? "location" : undefined} onClick={() => {setSection(id);setMenuOpen(false);}}>{label}</a>)}</nav>
+        <div className="building-toolbar">
+          <div><Building2 size={21} aria-hidden="true"/><label htmlFor="campus-building">Building<NativeSelect id="campus-building" value={loading && analytics.buildings.some((building) => building.name === requestedBuilding) ? requestedBuilding : analytics.selectedBuilding} onChange={(event) => chooseBuilding(event.target.value)}>{analytics.buildings.map((building) => <NativeSelectOption key={building.name} value={building.name}>{building.name}</NativeSelectOption>)}</NativeSelect></label></div>
+          <p role="status">{loading ? (requestedBuilding ? "Loading " + requestedBuilding + "…" : "Refreshing readings…") : notice}</p>
+        </div>
+      </> : emptyHeader}
       {errorNotice}
+      <CampusCsvImport onImported={loadOverview} alwaysOpen={!analytics} openRequest={importRequest}/>
+      {analytics && overview ? <div className="dashboard-results" aria-busy={loading}>
       <section id="pulse" className="csv-summary campus-section" tabIndex={-1} aria-label="Uploaded data overview">
         <article className="csv-summary__lead"><FileSpreadsheet size={26}/><p>Your uploaded period</p><h2>{analytics.selectedBuilding}</h2><span>{analytics.datasets.map((dataset) => (dataset.resource.startsWith("energy") ? "Energy" : "Water") + ": " + date(dataset.start) + " – " + date(dataset.end)).join(" · ")}</span><small>File attribution is user-provided and unverified. No carbon or sustainability score is inferred.</small></article>
         <div className="csv-stat-grid"><article><Zap size={19}/><p>Total uploaded energy</p><strong>{format(overview.summaries.energy.total)} <span>kWh</span></strong><small>{overview.summaries.energy.rowCount ? overview.summaries.energy.rowCount + " hourly readings" : "No energy CSV connected"}</small></article><article><Droplets size={19}/><p>Total uploaded water</p><strong>{format(overview.summaries.water.total)} <span>kL</span></strong><small>{overview.summaries.water.rowCount ? overview.summaries.water.rowCount + " hourly readings" : "No water CSV connected"}</small></article><article><Activity size={19}/><p>Record coverage</p><strong>{format(overview.coveragePercent)} <span>%</span></strong><small>{overview.missingHours} missing hourly slots · gaps unfilled</small></article><article><CircleAlert size={19}/><p>Flagged readings</p><strong>{overview.alerts.length}</strong><small>{analytics.forecasts.energy || analytics.forecasts.water ? "Latest analysed complete day" : "More history needed to check patterns"}</small></article></div>
       </section>
       <div className="forecast-section">{(["energy","water"] as const).map((resource) => <section className="campus-section" id={resource} key={resource} tabIndex={-1} aria-label={resource === "energy" ? "Energy outlook" : "Water outlook"}><ForecastCard forecast={analytics.forecasts[resource]} resource={resource} connected={!!analytics.resources[resource]}/></section>)}</div>
-      <CampusCsvImport onImported={imported} openRequest={importRequest}/>
-      <section id="estate" className="estate-section campus-section" tabIndex={-1} aria-label="Campus estate"><div className="dataset-card"><p className="section-index">Connected files</p><h2>Your building data</h2><div className="uploaded-files">{analytics.datasets.map((dataset) => <article key={dataset.id}><FileSpreadsheet size={20}/><div><b>{dataset.name}</b><p>{dataset.resource.startsWith("energy") ? "Energy" : "Water"} · {dataset.rowCount} readings · {dataset.missingHours} missing hours · {date(dataset.start)} – {date(dataset.end)}</p></div></article>)}</div>{(["energy","water"] as const).map((resource) => {const evaluation = analytics.evaluation[resource];return evaluation && <p key={resource} className="model-evaluation"><b>{resource === "energy" ? "Energy" : "Water"} validation:</b> {evaluation.testHours} held-out hours · {evaluation.wapePercent == null ? "WAPE unavailable for zero totals" : evaluation.wapePercent + "% weighted absolute error"} · MAE {evaluation.mae} {evaluation.unit}. Each test day uses earlier readings only; this does not guarantee future accuracy.</p>;})}</div><BuildingComparison comparisons={analytics.comparisons} selectedBuilding={analytics.selectedBuilding} onSelect={chooseBuilding} busy={loading}/></section>
+      <section id="estate" className="estate-section campus-section" tabIndex={-1} aria-label="Campus estate"><div className="dataset-card"><p className="section-index">Connected files</p><h2>Your building data</h2><div className="uploaded-files">{analytics.datasets.map((dataset) => <article key={dataset.id}><FileSpreadsheet size={20}/><div><b>{dataset.name}</b><p>{dataset.resource.startsWith("energy") ? "Energy" : "Water"} · {dataset.rowCount} readings · {dataset.missingHours} missing hours · {date(dataset.start)} – {date(dataset.end)}</p></div></article>)}</div>{(["energy","water"] as const).map((resource) => {const evaluation = analytics.evaluation[resource];return evaluation && <p key={resource} className="model-evaluation"><b>{resource === "energy" ? "Energy" : "Water"} validation:</b> {evaluation.testHours} held-out hours · {evaluation.wapePercent == null ? "WAPE unavailable for zero totals" : evaluation.wapePercent + "% weighted absolute error"} · MAE {evaluation.mae} {evaluation.unit}. Each test day uses earlier readings only; this does not guarantee future accuracy.</p>;})}</div><BuildingComparison comparisons={analytics.comparisons} selectedBuilding={analytics.selectedBuilding} onSelect={chooseBuilding} onOpenImport={openImporter} busy={loading}/></section>
       <section id="anomaly-details" className="anomaly-section campus-section" tabIndex={-1} aria-label="Detected anomalies"><div className="anomaly-section__head"><div><p className="section-index">Pattern checks</p><h2>Unusual readings</h2></div><span>Same hour on earlier days · score is not a probability</span></div><div className="anomaly-list">{overview.alerts.length ? overview.alerts.map((alert) => <article className="anomaly-item" key={alert.id}><div><b>{alert.title}</b><span>{time(alert.recordedAt)} IST · {alert.building}</span></div><p>{alert.reason}</p><strong>{alert.confidence}/100 pattern score</strong></article>) : <p>{analytics.forecasts.energy || analytics.forecasts.water ? "No unusual readings were detected for resources with enough history." : "Pattern checking needs at least four complete days of hourly readings."}</p>}</div></section>
       <div className="csv-charts">{(["energy","water"] as const).map((resource) => <article className="chart-card" key={resource}><header><div><p className="section-index">Latest complete day</p><h2>{resource === "energy" ? "Energy" : "Water"} across the day</h2></div><span>{overview.summaries[resource].latestDay ?? "No complete day"} · IST</span></header><div className="chart"><div className="legend"><span>{resource === "energy" ? "Energy · kWh" : "Water · kL"}</span></div><div className="chart-plot"><div className="gridlines"/><div className="energy-line">{overview.series[resource].length ? <Spark values={overview.series[resource]} color={resource === "energy" ? "#c8ff4d" : "#4ed2ff"}/> : <p className="chart-empty">Upload a complete day of {resource} readings.</p>}</div></div><div className="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div></div><footer><p>Complete-day total <b>{format(overview.summaries[resource].latestDayTotal)} {resource === "energy" ? "kWh" : "kL"}</b></p><p>Relative hourly pattern</p></footer></article>)}</div>
       <section id="actions" className="csv-actions campus-section" tabIndex={-1} aria-label="Reading review actions"><p className="section-index">From your findings</p><h2>Recommended reviews</h2><p>Investigate flagged readings before making operational changes. Savings are not estimated.</p>{overview.recommendations.length ? <div className="review-actions">{overview.recommendations.map((action) => <article key={action.id}><div><span>{time(action.recordedAt)} IST</span><h3>{action.title}</h3><p>{action.detail}</p></div><button type="button" onClick={() => void plan(action.id)} disabled={action.status === "planned" || !!planning} aria-label={"Plan " + action.title + " at " + action.recordedAt}>{action.status === "planned" ? <><Check size={16}/>Planned</> : planning === action.id ? "Saving…" : "Add to plan"}</button></article>)}</div> : <p>No review actions yet. They appear when your readings contain unusual usage with sufficient history.</p>}</section>
-      <p className="csv-notice" role="status">{notice}</p>
+      </div> : <Empty className="upload-help"><EmptyHeader><EmptyMedia><Activity size={24}/></EmptyMedia><EmptyTitle>Forecasts need four complete days</EmptyTitle><EmptyDescription>Shorter files still show consumption totals and coverage.</EmptyDescription></EmptyHeader></Empty>}
     </main>
   </div></SidebarProvider>;
 }

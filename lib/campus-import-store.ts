@@ -7,14 +7,22 @@ export type DatasetInfo = {
 };
 type ImportDatabase = Pick<D1Database, "prepare" | "batch">;
 
-export async function saveBuildingImport(db: ImportDatabase, csv: string, name: string, source: string) {
-  const preview = parseCampusCsv(csv, source);
+export async function saveBuildingImport(db: ImportDatabase, csv: string | ReturnType<typeof parseCampusCsv>, name: string, source: string) {
+  const preview = typeof csv === "string" ? parseCampusCsv(csv, source) : csv;
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(preview.readings)));
   const id = [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   await db.prepare("INSERT OR IGNORE INTO campus_imports (id, name, resource, building, source, row_count, missing_hours, start_at, end_at, status, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(id, name.slice(0, 100), preview.resource, preview.building, source, preview.rowCount, preview.missingHours, preview.start, preview.end, "staging", 0, new Date().toISOString()).run();
-  for (let start = 0; start < preview.readings.length; start += 60) {
-    await db.batch(preview.readings.slice(start, start + 60).map((reading) => db.prepare("INSERT OR IGNORE INTO campus_import_readings (import_id, recorded_at, value) VALUES (?, ?, ?)").bind(id, reading.recordedAt, reading.value)));
+  const inserts = [];
+  const rowsPerInsert = 30;
+  for (let start = 0; start < preview.readings.length; start += rowsPerInsert) {
+    const readings = preview.readings.slice(start, start + rowsPerInsert);
+    const placeholders = readings.map(() => "(?, ?, ?)").join(", ");
+    const values = readings.flatMap((reading) => [id, reading.recordedAt, reading.value]);
+    inserts.push(db.prepare("INSERT OR IGNORE INTO campus_import_readings (import_id, recorded_at, value) VALUES " + placeholders).bind(...values));
+  }
+  for (let start = 0; start < inserts.length; start += 20) {
+    await db.batch(inserts.slice(start, start + 20));
   }
   const count = await db.prepare("SELECT COUNT(*) AS count FROM campus_import_readings WHERE import_id = ?").bind(id).first<{count: number}>();
   if (count?.count !== preview.rowCount) throw new Error("The import did not finish. Your previous dataset remains active; please retry.");

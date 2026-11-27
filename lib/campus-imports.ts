@@ -4,17 +4,19 @@ import { saveBuildingImport, loadBuildingImports, restoreLegacyBuildingImports }
 import { removeAppFixtures } from "@/lib/campus-fixtures";
 
 export type { DatasetInfo } from "@/lib/campus-import-store";
-let prepared = false;
-async function prepareUserData() {
-  if (prepared) return;
+export const UPLOADED_CSV_SOURCE = "uploaded CSV · source unverified";
+let preparation: Promise<void> | undefined;
+function prepareUserData() {
   const db = getD1();
-  await removeAppFixtures(db);
-  await restoreLegacyBuildingImports(db);
-  prepared = true;
+  preparation ??= removeAppFixtures(db).then(() => restoreLegacyBuildingImports(db)).catch((error) => {
+    preparation = undefined;
+    throw error;
+  });
+  return preparation;
 }
-export async function saveCampusImport(csv: string, name: string) {
+export async function saveCampusImport(preview: CsvPreview, name: string) {
   await prepareUserData();
-  return saveBuildingImport(getD1(), csv, name, "uploaded CSV · source unverified");
+  return saveBuildingImport(getD1(), preview, name, UPLOADED_CSV_SOURCE);
 }
 export async function getActiveImports() {
   await prepareUserData();

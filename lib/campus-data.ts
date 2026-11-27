@@ -14,13 +14,14 @@ export async function getCampusOverview(building?: string) {
   const recommendations = await readingReviewActions(overview.alerts);
   if (recommendations.length) {
     const db = getD1();
-    await db.batch(recommendations.map((action) =>
+    const inserts = recommendations.map((action) =>
       db.prepare("INSERT OR IGNORE INTO campus_recommendations (id, title, detail, impact, tag, tone, category, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(action.id, action.title, action.detail, "Review reading", "CSV finding", action.resource === "water" ? "blue" : "lime", action.resource, "new", new Date().toISOString()),
-    ));
-    const statuses = await db.batch(recommendations.map((action) =>
+    );
+    const selects = recommendations.map((action) =>
       db.prepare("SELECT status FROM campus_recommendations WHERE id = ?").bind(action.id),
-    ));
+    );
+    const statuses = (await db.batch([...inserts, ...selects])).slice(inserts.length);
     recommendations.forEach((action, index) => {
       action.status = (statuses[index].results?.[0] as {status: string} | undefined)?.status ?? "new";
     });

@@ -12,6 +12,49 @@
 
 .csv-import,.dataset-card{max-width:1360px;margin:1rem auto 0;padding:1.25rem;border:1px solid #d9def5;border-radius:1.25rem;background:#fff;font-size:1rem;line-height:1.5}
 .csv-file-list{display:grid;gap:1rem;min-width:0}.csv-file-name{overflow-wrap:anywhere}.csv-file-details{display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap}.csv-import-actions{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}.csv-import-actions small{font-size:.875rem;color:#4a5777;flex:1;min-width:12rem}
+
+.csv-start__main { min-width: 0; }
+.csv-import { margin-bottom: 1rem; scroll-margin-top: 1rem; }
+.csv-import__body[hidden] { display: none; }
+.csv-import:focus-visible, .csv-picker input:focus-visible + label, .csv-import summary:focus-visible {
+  outline: 3px solid #437bd5;
+  outline-offset: 3px;
+}
+.csv-picker { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.csv-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+  padding: .6rem .9rem;
+  border-radius: .7rem;
+  background: #e9edff;
+  cursor: pointer;
+}
+.csv-picker input:disabled + label { opacity: .65; cursor: wait; }
+.csv-picker span, .csv-progress { font-size: .875rem; color: #4a5777; }
+.csv-progress:empty, .csv-file-list:empty { display: none; }
+.csv-import summary { color: #244cbb; padding-block: .55rem; cursor: pointer; font-size: .875rem; font-weight: 700; }
+.csv-import__body a { display: inline-flex; align-items: center; }
+.csv-preview { min-width: 0; background: #f4f6ff; border: 1px solid #dbe0f8; }
+.csv-preview [data-slot=table-cell], .csv-preview [data-slot=table-head] { white-space: normal; }
+.csv-file-status { border-radius: 1rem; padding: .15rem .55rem; background: white; font-weight: 700; }
+.csv-file-status[data-status=saved] { background: #e8f4d5; color: #365600; }
+.csv-file-status[data-status=error] { background: #fff0f1; color: #a72540; }
+.dashboard-results { min-width: 0; }
+.building-toolbar label, .building-toolbar [data-slot=native-select-wrapper] { min-width: 0; }
+.building-toolbar select { overflow: hidden; text-overflow: ellipsis; }
+.building-toolbar > p { overflow-wrap: anywhere; }
+.atlas-mobile a[aria-current=location] { background: #151b45; color: white; }
+.building-error p { margin: 0; }
+.uploaded-files svg { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .atlas-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .6rem; }
+  .atlas-header h1 { font-size: clamp(1.15rem, 5.5vw, 1.65rem); }
+  .csv-app .upload-link { padding-inline: .65rem; white-space: nowrap; }
+  .csv-import__head > div { align-items: flex-start; }
+  .building-comparison [data-slot=table-cell], .building-comparison [data-slot=table-head] { white-space: normal; overflow-wrap: anywhere; }
+}
 .csv-import__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}.csv-import__head>div{display:flex;align-items:center;gap:.8rem}.csv-import h2,.dataset-card h2{margin:0;font-size:1.2rem;font-weight:800;letter-spacing:-.03em}.csv-import p,.dataset-card p{margin:.3rem 0;color:#53607c;font-size:.875rem}.csv-import button{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;padding:.65rem 1rem;border:0;border-radius:.7rem;background:#151b45;color:#fff;font-size:.875rem;font-weight:700;white-space:nowrap}.csv-import button:disabled{opacity:.6;cursor:wait}.csv-import button:focus-visible,.csv-import a:focus-visible{outline:3px solid #437bd5;outline-offset:3px}.csv-import__body{display:grid;gap:.7rem;margin-top:1rem;padding-top:1rem;border-top:1px solid #dbe0f8}.csv-import__body label{font-size:.875rem;font-weight:700}.csv-import__body input{height:auto;min-height:2.8rem;padding:.5rem;font-size:.875rem}.csv-import__body a,.dataset-card a{color:#244cbb;text-decoration:underline;text-underline-offset:3px;font-size:.875rem}.csv-import__body code{overflow-wrap:anywhere}.csv-import__body pre{margin:0;padding:.8rem;border-radius:.6rem;background:#f0f3ff;overflow-x:auto;font-size:.875rem}.csv-preview{display:grid;gap:.5rem;padding:1rem;border-radius:.8rem;background:#f3f8e9}.csv-preview>div:first-child{display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap}.csv-preview span,.csv-preview small{font-size:.875rem;color:#4a5777}.csv-preview button{justify-self:start}.csv-preview th,.csv-preview td{font-size:.875rem}.csv-import p.csv-error{padding:.7rem;background:#fff0f1;border-radius:.6rem;color:#a72540}.csv-import p.csv-warning{color:#805417}.csv-success{padding:.8rem;border-radius:.6rem;background:#efffc2;color:#365600!important}.dataset-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.4fr);gap:1.5rem}.dataset-card .section-index{font-size:.75rem}.dataset-evaluation{padding:1rem;border-radius:.8rem;background:#151b45;color:white}.dataset-evaluation>b{display:block;font-size:2rem;line-height:1.1;color:#dfff63}.dataset-evaluation>span,.dataset-evaluation small{font-size:.875rem}.dataset-evaluation p{color:#c5d0f8}.dataset-evaluation small{display:block;color:#c5d0f8;line-height:1.5}.forecast-building{margin:.5rem 0 0;color:#c5ccef;font-size:.875rem}.atlas-tabs>b{font-size:.875rem;padding:.6rem 0}.campus-picker{text-decoration:none}.csv-import__head>div>svg{flex-shrink:0}
 @media(max-width:780px){.csv-import__head{align-items:start;flex-direction:column}.dataset-card{grid-template-columns:1fr}.csv-import,.dataset-card{padding:1rem}.forecast-card__foot{flex-direction:column}}
 
