@@ -5,6 +5,7 @@ import { Building2 } from "lucide-react";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { comparisonForDay, type BuildingComparisons } from "@/lib/campus-buildings";
+import { SIMULATED_CSV_SOURCE } from "@/lib/campus-csv";
 
 export function BuildingComparison({ comparisons, selectedBuilding, onSelect, onOpenImport, busy }: {
   comparisons: BuildingComparisons; selectedBuilding: string; onSelect: (building: string) => void; onOpenImport: () => void; busy: boolean;
@@ -34,7 +35,7 @@ export function BuildingComparison({ comparisons, selectedBuilding, onSelect, on
       <TableHeader><TableRow><TableHead>Building</TableHead><TableHead>Source</TableHead><TableHead>Complete day · IST</TableHead><TableHead>Consumption ({unit})</TableHead><TableHead><span className="sr-only">Open building</span></TableHead></TableRow></TableHeader>
       <TableBody>{comparison.rows.map((row) => <TableRow key={row.building} data-state={row.building === selectedBuilding ? "selected" : undefined}>
         <TableCell><b>{row.building}</b></TableCell>
-        <TableCell><span className="source-pill">Uploaded · unverified</span></TableCell>
+        <TableCell><span className="source-pill">{row.source === SIMULATED_CSV_SOURCE ? "Contains simulated readings" : "Uploaded · unverified"}</span></TableCell>
         <TableCell>{row.reading?.day ?? "Not enough readings"}</TableCell>
         <TableCell><div className="comparison-consumption">
           <strong>{row.reading ? row.reading.total.toLocaleString("en-IN") : "—"}</strong>

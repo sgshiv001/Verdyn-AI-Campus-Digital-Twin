@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCampusCsv } from "../lib/campus-csv.ts";
+import { parseCampusCsv, prepareCampusUpload, MAX_CSV_BYTES, SIMULATED_CSV_SOURCE } from "../lib/campus-csv.ts";
 import { analyzeResource, backtestResource } from "../lib/campus-analytics.ts";
 
 // Fixtures are generated in memory, never shipped as sample files or app data.
 const header = "recorded_at,building,resource,value,unit\n";
 const row = "2024-01-01T00:00:00+05:30,Block A,energy,10,kWh\n";
+
+test("prepares a monthly archive larger than 500 KB with separate building and resource datasets", () => {
+  const archiveHeader = "timestamp_local,site_id,building_id,electricity_kwh,water_liters,electricity_missing,water_missing,source_dataset\n";
+  const rows = Array.from({length: 744}, (_, hour) => {
+    const time = new Date(Date.UTC(2024, 0, 1, hour)).toISOString().slice(0, 19).replace("T", " ");
+    return Array.from({length: 10}, (_, building) =>
+      [time, "DEMO_CAMPUS", "B" + building, 11.012, 21.96, 0, Number(hour === 3), "SIMULATED_DEMO_NOT_MEASURED"].join(","));
+  }).flat();
+  const text = archiveHeader + rows.join("\n");
+  assert(text.length > MAX_CSV_BYTES);
+  const datasets = prepareCampusUpload(text);
+  assert.equal(datasets.length, 20);
+  assert(datasets.every((dataset) => dataset.preview));
+  const energy = datasets.find((dataset) => dataset.label === "B0 · energy");
+  const water = datasets.find((dataset) => dataset.label === "B0 · water");
+  assert.equal(energy.preview.rowCount, 744);
+  assert.equal(water.preview.rowCount, 743);
+  const [first] = parseCampusCsv(water.csv).readings;
+  assert.equal(first.recordedAt, "2023-12-31T18:30:00.000Z");
+  assert.equal(first.value, 0.02196);
+  assert.equal(first.source, SIMULATED_CSV_SOURCE);
+});
 const csv = header + Array.from({length: 96}, (_, i) =>
   `2024-01-${String(1 + Math.floor(i / 24)).padStart(2, "0")}T${String(i % 24).padStart(2, "0")}:00:00+05:30,Block A,energy,10,kWh`).join("\n");
 

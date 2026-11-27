@@ -9,10 +9,11 @@ type ImportDatabase = Pick<D1Database, "prepare" | "batch">;
 
 export async function saveBuildingImport(db: ImportDatabase, csv: string | ReturnType<typeof parseCampusCsv>, name: string, source: string) {
   const preview = typeof csv === "string" ? parseCampusCsv(csv, source) : csv;
+  const readingSource = preview.readings[0].source;
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(preview.readings)));
   const id = [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   await db.prepare("INSERT OR IGNORE INTO campus_imports (id, name, resource, building, source, row_count, missing_hours, start_at, end_at, status, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, name.slice(0, 100), preview.resource, preview.building, source, preview.rowCount, preview.missingHours, preview.start, preview.end, "staging", 0, new Date().toISOString()).run();
+    .bind(id, name.slice(0, 100), preview.resource, preview.building, readingSource, preview.rowCount, preview.missingHours, preview.start, preview.end, "staging", 0, new Date().toISOString()).run();
   const inserts = [];
   const rowsPerInsert = 30;
   for (let start = 0; start < preview.readings.length; start += rowsPerInsert) {

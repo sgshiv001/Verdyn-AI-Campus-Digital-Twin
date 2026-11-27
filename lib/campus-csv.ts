@@ -2,6 +2,10 @@ import type { HourlyReading } from "./campus-analytics.ts";
 
 export const MAX_CSV_BYTES = 512_000;
 export const MAX_CSV_ROWS = 3_000;
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const SIMULATED_CSV_SOURCE = "uploaded CSV · contains simulated readings";
+const columns = ["recorded_at", "building", "resource", "value", "unit"];
+const simulatedMarker = "SIMULATED_DEMO_NOT_MEASURED";
 export type CsvPreview = {
   readings: HourlyReading[];
   rowCount: number;
@@ -44,12 +48,14 @@ export function parseCampusCsv(text: string, source = "uploaded CSV"): CsvPrevie
   if (new TextEncoder().encode(text).length > MAX_CSV_BYTES) throw new Error("Use a CSV smaller than 500 KB.");
   const rows = csvRows(text.replace(/^\uFEFF/, ""));
   const header = rows.shift()?.map((name) => name.toLowerCase());
-  const columns = ["recorded_at", "building", "resource", "value", "unit"];
   if (!header || columns.some((name) => !header.includes(name)) || new Set(header).size !== header.length) {
     throw new Error("CSV headers must include recorded_at, building, resource, value, unit.");
   }
   if (!rows.length || rows.length > MAX_CSV_ROWS) throw new Error(`Use between 1 and ${MAX_CSV_ROWS} hourly rows.`);
   const readings: HourlyReading[] = [], keys = new Map<string, number>();
+  const sourceColumn = header.indexOf("source_dataset");
+  const simulated = sourceColumn >= 0 && rows.some((row) => row[sourceColumn] === simulatedMarker);
+  const readingSource = simulated ? SIMULATED_CSV_SOURCE : source;
   let duplicateCount = 0;
   rows.forEach((row, index) => {
     const line = index + 2;
@@ -72,7 +78,7 @@ export function parseCampusCsv(text: string, source = "uploaded CSV"): CsvPrevie
     if (!/^(?:\d+\.?\d*|\.\d+)$/.test(rawValue)) throw new Error(`Row ${line}: value must be a non-negative number.`);
     const value = Number(rawValue);
     if (!Number.isFinite(value) || value > 1_000_000) throw new Error(`Row ${line}: value is outside the supported range.`);
-    const reading = { resource: resource === "energy" ? "energy_hourly_kwh" : "water_hourly_kl", building, recordedAt: date.toISOString(), value, unit, source } as HourlyReading;
+    const reading = { resource: resource === "energy" ? "energy_hourly_kwh" : "water_hourly_kl", building, recordedAt: date.toISOString(), value, unit, source: readingSource } as HourlyReading;
     if (readings.length && (readings[0].building !== building || readings[0].resource !== reading.resource)) throw new Error("Import one building and one resource per CSV.");
     const recordedAt = date.toISOString();
     const previous = keys.get(recordedAt);
@@ -97,8 +103,65 @@ export function parseCampusCsv(text: string, source = "uploaded CSV"): CsvPrevie
   const missingHours = span + 1 - readings.length;
   const completeDays = [...days.values()].filter((hours) => hours.size === 24).length;
   const warnings = [];
+  if (simulated) warnings.push("This dataset contains readings labeled as simulated.");
   if (duplicateCount) warnings.push(`${duplicateCount} identical duplicate rows will be skipped.`);
   if (missingHours) warnings.push(`${missingHours} missing hours; gaps will remain unfilled.`);
   if (completeDays < 4) warnings.push("Forecasting needs at least four complete days of readings.");
   return { readings, rowCount: readings.length, duplicateCount, missingHours, completeDays, start: first.recordedAt, end: last.recordedAt, building: first.building, resource: first.resource, unit: first.unit, warnings };
+}
+
+type UploadDataset = {label: string; csv: string; preview: CsvPreview} | {label: string; error: string};
+
+function csvField(value: string) {
+  return /[",\r\n]/.test(value) ? '"' + value.replaceAll('"', '""') + '"' : value;
+}
+
+function litersToKiloliters(value: string) {
+  // Shift the decimal point exactly so fractional liters survive conversion.
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(value)) return value;
+  const [whole, fraction = ""] = value.split(".");
+  const digits = whole.padStart(4, "0");
+  return digits.slice(0, -3) + "." + digits.slice(-3) + fraction;
+}
+
+export function prepareCampusUpload(text: string): UploadDataset[] {
+  if (new TextEncoder().encode(text).length > MAX_UPLOAD_BYTES) throw new Error("Choose a CSV up to 10 MB.");
+  const rows = csvRows(text.replace(/^\uFEFF/, ""));
+  const header = rows.shift()?.map((column) => column.toLowerCase()) ?? [];
+  if (new Set(header).size !== header.length) throw new Error("CSV headers must be unique.");
+  const canonical = columns.every((column) => header.includes(column));
+  const archive = ["timestamp_local", "building_id"].every((column) => header.includes(column))
+    && ["electricity_kwh", "water_liters"].some((column) => header.includes(column));
+  if (!canonical && !archive) throw new Error("CSV headers must include recorded_at, building, resource, value, unit, or match the Verdyn monthly archive.");
+  const groups = new Map<string, {label: string; rows: string[]}>();
+
+  for (const [index, row] of rows.entries()) {
+    if (row.length !== header.length) throw new Error(`Row ${index + 2}: column count does not match the header.`);
+    const get = (column: string) => row[header.indexOf(column)] ?? "";
+    const building = get(canonical ? "building" : "building_id");
+    const local = get("timestamp_local").replace(" ", "T");
+    const timestamp = canonical ? get("recorded_at") : /(?:Z|[+-]\d{2}:\d{2})$/.test(local) ? local : local + "+05:30";
+    const source = get("source_dataset");
+    const records = canonical ? [[get("resource"), get("value"), get("unit")]] : [
+      ["energy", get("electricity_missing") === "1" ? "" : get("electricity_kwh"), "kWh"],
+      ["water", get("water_missing") === "1" ? "" : litersToKiloliters(get("water_liters")), "kL"],
+    ];
+    for (const [resource, value, unit] of records) {
+      if (!canonical && !value) continue;
+      const key = JSON.stringify([building, resource]);
+      const group = groups.get(key) ?? {label: [building, resource].filter(Boolean).join(" · "), rows: []};
+      group.rows.push([timestamp, building, resource, value, unit, source].map(csvField).join(","));
+      groups.set(key, group);
+    }
+  }
+  if (!groups.size) throw new Error("The CSV contains no readings.");
+  return [...groups.values()].map(({label, rows: groupRows}) => {
+    const csv = [...columns, "source_dataset"].join(",") + "\n" + groupRows.join("\n") + "\n";
+    try {
+      const preview = parseCampusCsv(csv);
+      return {label, csv, preview: {...preview, readings: preview.readings.slice(0, 5)}};
+    } catch (error) {
+      return {label, error: error instanceof Error ? error.message : "These readings could not be checked."};
+    }
+  });
 }

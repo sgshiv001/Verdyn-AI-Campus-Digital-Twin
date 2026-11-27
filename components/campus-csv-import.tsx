@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Upload, Check, FileSpreadsheet } from "lucide-react";
-import { MAX_CSV_BYTES, type CsvPreview } from "@/lib/campus-csv";
+import { MAX_UPLOAD_BYTES, prepareCampusUpload, type CsvPreview } from "@/lib/campus-csv";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type SelectedCsv = {
   id: number;
   name: string;
+  label?: string;
   csv: string;
   preview: CsvPreview | null;
   status: "checking" | "ready" | "saving" | "saved" | "error";
@@ -22,13 +23,13 @@ const statusLabels: Record<SelectedCsv["status"], string> = {
   error: "Needs attention",
 };
 
-async function submitCsv(csv: string, name: string, action: "preview" | "import") {
-  const fallback = action === "preview" ? "Could not check this file. Select it again to retry." : "Could not save this file. Retry the import.";
+async function saveCsv(csv: string, name: string) {
+  const fallback = "Could not save these readings. Retry the import.";
   try {
     const response = await fetch("/api/campus/import", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({csv, name, action}),
+      body: JSON.stringify({csv, name, action: "import"}),
       signal: AbortSignal.timeout(45_000),
     });
     const result = await response.json().catch(() => null) as (CsvPreview & {error?: string}) | null;
@@ -64,18 +65,21 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
     setExpanded(true);
     setPhase("checking");
     setError("");
-    const next: SelectedCsv[] = selected.map((file, id) => ({id, name: file.name, csv: "", preview: null, status: "checking", error: ""}));
-    setFiles([...next]);
+    const next: SelectedCsv[] = [];
+    setFiles([]);
     try {
-      for (const [id, file] of selected.entries()) {
+      for (const file of selected) {
         try {
-          if (file.size > MAX_CSV_BYTES || !file.name.toLowerCase().endsWith(".csv")) throw new Error("Choose a .csv file up to 500 KB.");
-          const csv = await file.text();
-          const result = await submitCsv(csv, file.name, "preview");
-          if (!result.preview) throw new Error(result.error);
-          next[id] = {...next[id], csv, preview: result.preview, status: "ready"};
+          if (file.size > MAX_UPLOAD_BYTES || !file.name.toLowerCase().endsWith(".csv")) throw new Error("Choose a .csv file up to 10 MB.");
+          const datasets = prepareCampusUpload(await file.text());
+          for (const dataset of datasets) {
+            const entry = {id: next.length, name: file.name, label: datasets.length > 1 ? dataset.label : undefined};
+            next.push("error" in dataset
+              ? {...entry, csv: "", preview: null, status: "error", error: dataset.error}
+              : {...entry, csv: dataset.csv, preview: dataset.preview, status: "ready", error: ""});
+          }
         } catch (failure) {
-          next[id] = {...next[id], status: "error", error: failure instanceof Error ? failure.message : "The file could not be read."};
+          next.push({id: next.length, name: file.name, csv: "", preview: null, status: "error", error: failure instanceof Error ? failure.message : "The file could not be read."});
         }
         setFiles([...next]);
       }
@@ -114,7 +118,7 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
         changedPairs.add(pair);
         next[index] = {...file, status: "saving", error: ""};
         setFiles([...next]);
-        const result = await submitCsv(file.csv, file.name, "import");
+        const result = await saveCsv(file.csv, file.name);
         if (result.preview) {
           next[index] = {...file, preview: result.preview, status: "saved", error: ""};
           importedBuilding = result.preview.building;
@@ -134,13 +138,15 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
   const saved = files.filter((file) => file.status === "saved");
   const lastSaved = saved.at(-1)?.preview?.building;
   const retrying = pending.length > 0 && pending.every((file) => file.status === "error");
-  const importLabel = retrying ? "Retry failed imports" : pending.length === 1 ? "Import 1 file" : "Import " + pending.length + " files";
+  const grouped = files.some((file) => file.label);
+  const itemLabel = grouped ? "dataset" : "file";
+  const importLabel = retrying ? "Retry failed imports" : "Import " + pending.length + " " + itemLabel + (pending.length === 1 ? "" : "s");
   const pairs = files.flatMap((file) => file.preview ? [JSON.stringify([file.preview.building, file.preview.resource])] : []);
   const duplicatePairs = new Set(pairs).size < pairs.length;
 
   return <section ref={panel} tabIndex={-1} className="csv-import" id="csv-import" aria-label="Import campus readings">
     <div className="csv-import__head">
-      <div><FileSpreadsheet size={22} aria-hidden="true"/><div><h2>Import campus readings</h2><p>One building and one resource per CSV.</p></div></div>
+      <div><FileSpreadsheet size={22} aria-hidden="true"/><div><h2>Import campus readings</h2><p>Upload standard CSVs or a Verdyn monthly archive.</p></div></div>
       {!alwaysOpen && <button type="button" aria-controls="csv-import-body" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         <Upload size={16} aria-hidden="true"/>{expanded ? "Close import" : "Open importer"}
       </button>}
@@ -153,17 +159,18 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
         void chooseFiles(selected);
         }} />
         <label htmlFor="campus-csv"><Upload size={16} aria-hidden="true"/>{files.length ? "Choose new files" : "Choose CSV files"}</label>
-        <span id="csv-limits">Up to 3,000 rows and 500 KB per file</span>
+        <span id="csv-limits">Up to 10 MB per file and 3,000 readings per building and resource</span>
       </div>
       <div className="csv-import-actions">
         <details><summary>CSV format</summary>
           <p><code>recorded_at, building, resource, value, unit</code></p>
           <p>Use hourly IST timestamps with <code>+05:30</code> and enter energy in kWh or water in kL.</p>
+          <p>Monthly archives use <code>timestamp_local</code>, <code>building_id</code>, <code>electricity_kwh</code>, and <code>water_liters</code>.</p>
         </details>
         <a href="/api/campus/template" download>Download CSV template</a>
       </div>
       <div role="status" className="csv-progress">
-        {phase === "checking" ? "Checking files…" : phase === "saving" ? "Saving files…" : phase === "refreshing" ? "Updating dashboard…" : saved.length ? saved.length + " of " + files.length + " files saved." : ""}
+        {phase === "checking" ? "Checking files…" : phase === "saving" ? "Saving " + itemLabel + "s…" : phase === "refreshing" ? "Updating dashboard…" : saved.length ? saved.length + " of " + files.length + " " + itemLabel + "s saved." : ""}
       </div>
       {error && <div className="csv-import-actions">
         <p role="alert" className="csv-error">{error}</p>
@@ -174,9 +181,10 @@ export function CampusCsvImport({ onImported, alwaysOpen = false, openRequest = 
         <button type="button" onClick={() => void save()} disabled={busy}><Check size={16} aria-hidden="true"/>{importLabel}</button>
         <small>Each import sets the active dataset for its building and resource.</small>
       </div>}
-      <div className="csv-file-list">{files.map((file) => <article className="csv-preview" key={file.id} aria-label={file.name}>
+      <div className="csv-file-list">{files.map((file) => <article className="csv-preview" key={file.id} aria-label={[file.name, file.label].filter(Boolean).join(" · ")}>
         <div><b className="csv-file-name">{file.name}</b><span className="csv-file-status" data-status={file.status}>{statusLabels[file.status]}</span></div>
         {file.error && <p role="alert" className="csv-error">{file.error}</p>}
+        {!file.preview && file.label && <p>{file.label}</p>}
         {file.preview && <>
           <div className="csv-file-details"><b>{file.preview.building} · {file.preview.resource.startsWith("energy") ? "Energy" : "Water"}</b><span>{file.preview.rowCount} hours · {file.preview.completeDays} complete days · {file.preview.unit}</span></div>
           <p>{new Date(file.preview.start).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})} – {new Date(file.preview.end).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata"})}</p>
