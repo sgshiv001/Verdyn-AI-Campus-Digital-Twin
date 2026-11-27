@@ -9,6 +9,10 @@ The active application is Python + FastAPI served by Uvicorn. Node.js is not req
 - Python 3.11 or newer
 - A modern browser
 
+## Run in VS Code
+
+Open `launch_dashboard.py` and select **Run Python File**, or run `python launch_dashboard.py` from the VS Code terminal. It creates the local environment, installs dependencies, and opens the dashboard at http://127.0.0.1:8000. Use `--port 8001` if the default port is busy.
+
 ## Windows setup
 
 Open PowerShell in this folder and run:
@@ -56,7 +60,9 @@ Then open `http://127.0.0.1:8000`.
 
 The app opens immediately with the supplied simulated campus archive: 10 buildings and two years of hourly electricity and water data. Use the dataset selector in the top bar to switch datasets.
 
-CSV uploads are optional. Open `/imports`, choose a CSV, and Verdyn will save it under `data/uploads`, parse it, and add it to the dataset selector. Uploaded datasets persist across server restarts on the local machine.
+Open `/imports` and select one or more UTF-8 CSVs of up to 10 MB each. Verdyn validates each file, reports its result, saves it under `data/uploads`, and loads the last valid dataset. Each file can be opened separately from the dataset selector after a restart.
+
+For the standard Verdyn format, use `recorded_at,building,resource,value,unit` with hourly IST timestamps. Use `energy` with `kWh` or `water` with `kL`.
 
 Supported column names include:
 

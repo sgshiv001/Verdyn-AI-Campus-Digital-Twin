@@ -7,3 +7,31 @@
 .page-imports .hero-grid,.page-imports .section-head,.page-imports .two-col,.page-imports .insights-head,.page-imports .lower-grid,.page-imports .quality-banner{display:none}.page-imports .import-panel{display:flex;margin-top:0}
 .page-quality .hero-grid,.page-quality .section-head,.page-quality .two-col,.page-quality .insights-head,.page-quality .lower-grid,.page-quality .import-panel{display:none}.page-quality .quality-banner{margin-top:0}
 @media(max-width:700px){.dataset-select{max-width:145px}.page-imports .import-panel{display:block}}
+
+.main, .import-panel > div, .dataset-row > div { min-width: 0; }
+.top-actions label { font-size: .875rem; font-weight: 700; }
+.dataset-select { max-width: min(48vw, 260px); min-height: 44px; font-size: .875rem; }
+.dataset-row b, .dataset-row small { overflow-wrap: anywhere; font-size: .875rem; }
+.dataset-row button { min-height: 44px; font-size: .875rem; }
+.dataset-row button:disabled { color: #5e7568; }
+.dashboard-status { margin: 0 1.25rem; padding: .6rem; font-size: .875rem; }
+.dashboard-status:empty, #import-status:empty, #import-results:empty, #forecast-bars[hidden] { display: none; }
+.dashboard-status.has-error, .import-failure { color: #a22b27; }
+#import-results { padding-inline-start: 1.3rem; overflow-wrap: anywhere; }
+#import-status, #import-results li, #forecast-detail, #chart-status { font-size: .875rem; margin-block: .5rem; }
+.welcome h1, .hero-card h2, .building-card h3 { overflow-wrap: anywhere; }
+.upload-btn { min-height: 44px; }
+.upload-btn:focus-within, .mobile-nav a:focus-visible { outline: 3px solid #0c6c4d; outline-offset: 3px; }
+.mobile-nav { display: none; }
+.x-axis { flex-wrap: wrap; gap: .4rem; }
+.page-imports .building-grid, .page-insights .building-grid,
+.page-quality .building-grid, .page-actions .building-grid,
+.page-imports .welcome-actions { display: none; }
+@media (max-width: 700px) {
+  .mobile-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: .25rem; padding: .5rem .75rem; background: #fbfdfb; }
+  .mobile-nav a { display: grid; place-items: center; min-height: 44px; color: #264b3c; font-size: .875rem; text-decoration: none; }
+  .mobile-nav a.active { border-radius: .5rem; background: #dbe9df; font-weight: 700; }
+  .top-actions { min-width: 0; }
+  .top-actions label { display: none; }
+  .import-panel .upload-btn { margin-top: .75rem; }
+}

@@ -1,13 +1,236 @@
-let state=null;let resource='energy';let dataset='demo';
-const $=s=>document.querySelector(s);
-function pageName(){return location.pathname.split('/').filter(Boolean)[0]||'overview'}
-function setPageState(){const page=pageName();document.body.className='page-'+page;document.querySelectorAll('.sidebar nav a').forEach(link=>link.classList.toggle('active',new URL(link.href).pathname.replace('/','')===page));const titles={buildings:['Building comparison','See every building on the same evidence base.'],actions:['Action plan','Move from a signal to an accountable next step.'],insights:['Insights & signals','Explainable patterns from your campus data.'],imports:['Imports & datasets','Switch between the demo archive and your own uploaded readings.'],quality:['Data quality','Know what is reliable before you compare or act.']};if(titles[page]&&$('.welcome h1')){$('.welcome h1').innerHTML=titles[page][0]+' <span>✦</span>';$('.subhead').textContent=titles[page][1];}}
-async function load(){const r=await fetch('/api/dashboard?dataset='+encodeURIComponent(dataset));state=await r.json();render();await loadDatasets();setPageState();}
-async function loadDatasets(){const r=await fetch('/api/datasets');const list=await r.json();const select=$('#dataset-select');if(select)select.innerHTML=list.map(d=>`<option value="${d.id}" ${d.id===dataset?'selected':''}>${d.name}</option>`).join('');const box=$('#dataset-list');if(box)box.innerHTML=list.map(d=>`<div class="dataset-row"><span class="dataset-check">✓</span><div><b>${d.name}</b><small>${Number(d.rows).toLocaleString()} rows · ${d.mode}</small></div><button onclick="changeDataset('${d.id}')">Open</button></div>`).join('');}
-function render(){const cards=$('#building-cards');if(cards)cards.innerHTML=state.buildings.map((b,i)=>`<article class="building-card ${i===0?'selected':''}"><span class="building-dot dot-${b.color}"></span><h3>${b.name}</h3><span class="status ${b.status==='Needs review'?'review':b.status==='Watch'?'watch':''}">${b.status}</span><div class="building-meta">${b.area} · ${b.occupancy} occupied</div><div class="building-metrics"><div><strong>${(b.energy/1000).toFixed(1)}k</strong><small>kWh energy</small></div><div><strong>${(b.water/1000).toFixed(1)}k</strong><small>kL water</small></div></div><span class="change ${b.change.startsWith('+')?'bad':''}">${b.change} vs last period</span></article>`).join('');const alerts=$('#alerts-list');if(alerts)alerts.innerHTML=state.alerts.map(a=>`<div class="alert-row"><span class="alert-bar ${a.severity}"></span><div><h4>${a.title}</h4><p>${a.detail}</p><small>${a.building} · ${a.time}</small></div><small>${a.score}/100</small></div>`).join('');const actions=$('#actions-list');if(actions)actions.innerHTML=state.actions.map(a=>`<div class="action-row"><button class="check ${a.done?'done':''}" onclick="toggleAction('${a.id}')">${a.done?'✓':'○'}</button><div><h4>${a.title}</h4><p>${a.detail}</p><small>${a.owner} · Due ${a.due}</small></div><span class="priority">${a.priority}</span></div>`).join('');const quality=$('.quality-banner h2 strong');if(quality)quality.textContent=`${state.kpis.coverage}% complete`;drawChart();}
-function drawChart(){const chart=$('#line');if(!chart||!state.chart[resource].length)return;const vals=state.chart[resource].map(x=>x.value);const max=Math.max(...vals)*1.05;const count=Math.max(vals.length-1,1);const pts=vals.map((v,i)=>`${(i/count)*720},${235-(v/max)*205}`).join(' ');$('#line').setAttribute('d','M '+pts);$('#area').setAttribute('d',`M ${pts} L 720,240 L 0,240 Z`);$('#dots').innerHTML=vals.map((v,i)=>i%Math.max(1,Math.floor(vals.length/5))===0?`<circle cx="${(i/count)*720}" cy="${235-(v/max)*205}" r="4" fill="#fff" stroke="#b9ef43" stroke-width="3"/>`: '').join('');const legend=$('.chart-legend b');if(legend)legend.textContent=resource==='energy'?'↘ 4.8% vs previous period':'↗ 2.3% vs previous period';}
-async function changeDataset(id){dataset=id;await load();showToast('Showing '+(id==='demo'?'the Verdyn demo archive':'your saved CSV dataset')+'.');}
-async function toggleAction(id){await fetch('/api/actions/'+id+'/toggle?dataset='+encodeURIComponent(dataset),{method:'POST'});await load();showToast('Action plan updated.');}
-async function importCsv(input){if(!input.files[0])return;const fd=new FormData();fd.append('file',input.files[0]);const r=await fetch('/api/import',{method:'POST',body:fd});const data=await r.json();if(data.error){showToast(data.error);return}dataset=data.id;await load();showToast(`${data.rows.toLocaleString()} rows saved — now viewing your import.`);input.value='';}
-function showToast(text){const t=$('#toast');if(!t)return;t.textContent=text;t.classList.add('show');clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>t.classList.remove('show'),3000)}
-setPageState();document.addEventListener('click',e=>{const b=e.target.closest('[data-resource]');if(!b)return;document.querySelectorAll('[data-resource]').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');resource=b.dataset.resource;drawChart();});load();
+const $ = (selector) => document.querySelector(selector);
+const formatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+const number = (value) => value == null ? "—" : formatter.format(value);
+const units = { energy: "kWh", water: "kL" };
+let dataset = sessionStorage.getItem("verdyn-dataset") || "demo";
+let resource = "energy";
+let state;
+let activeLoad;
+
+async function request(url, options) {
+  const response = await fetch(url, options);
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body) {
+    const error = new Error(typeof body?.detail === "string" ? body.detail : "The request failed. Try again.");
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function row(tag, className, text) {
+  const element = document.createElement(tag);
+  element.className = className;
+  if (text != null) element.textContent = text;
+  return element;
+}
+
+function setupPage() {
+  const paths = {
+    "/": ["overview", "Campus dashboard"],
+    "/buildings": ["buildings", "Building comparison"],
+    "/actions": ["actions", "Action plan"],
+    "/insights": ["insights", "Insights & signals"],
+    "/imports": ["imports", "Imports & datasets"],
+    "/quality": ["quality", "Data quality"],
+  };
+  const [page, title] = paths[location.pathname] || paths["/"];
+  document.body.classList.add("page-" + page);
+  $(".welcome h1").textContent = title;
+  for (const link of document.querySelectorAll(".sidebar nav a, .mobile-nav a")) {
+    if (new URL(link.href).pathname === location.pathname) {
+      link.classList.add("active");
+      link.setAttribute("aria-current", "page");
+    } else link.classList.remove("active");
+  }
+}
+
+async function load(id, fallback = false) {
+  activeLoad?.abort();
+  const controller = new AbortController();
+  activeLoad = controller;
+  const status = $("#dashboard-status");
+  status.textContent = "Loading dashboard…";
+  status.classList.remove("has-error");
+  $(".content").setAttribute("aria-busy", "true");
+  try {
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    const [next, datasets] = await Promise.all([
+      request("/api/dashboard?dataset=" + encodeURIComponent(id), {signal, cache:"no-store"}),
+      request("/api/datasets", {signal, cache:"no-store"}),
+    ]);
+    if (controller.signal.aborted) return;
+    dataset = id;
+    sessionStorage.setItem("verdyn-dataset", dataset);
+    state = next;
+    if (!state.chart[resource].length && state.chart.water.length) resource = "water";
+    if (!state.chart[resource].length && state.chart.energy.length) resource = "energy";
+    render();
+    renderDatasets(datasets);
+    status.textContent = "";
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    if (fallback && error.status === 404 && id !== "demo") return load("demo");
+    $("#dataset-select").value = dataset;
+    status.classList.add("has-error");
+    status.textContent = error.name === "TimeoutError" ? "The dashboard took too long to load." : error.message;
+    const retry = row("button", "btn light", "Retry");
+    retry.addEventListener("click", () => void load(id));
+    status.append(" ", retry);
+  } finally {
+    if (activeLoad === controller) $(".content").setAttribute("aria-busy", "false");
+  }
+}
+
+function renderDatasets(datasets) {
+  const options = datasets.map((item) => new Option(item.name, item.id, false, item.id === dataset));
+  $("#dataset-select").replaceChildren(...options);
+  $("#dataset-list").replaceChildren(...datasets.map((item) => {
+    const itemRow = row("div", "dataset-row");
+    const description = row("div", "");
+    description.append(row("b", "", item.name), row("small", "", number(item.rows) + " readings · " + item.mode));
+    const open = row("button", "", item.id === dataset ? "Selected" : "Open");
+    open.type = "button";
+    open.disabled = item.id === dataset;
+    open.addEventListener("click", () => void load(item.id));
+    itemRow.append(description, open);
+    return itemRow;
+  }));
+}
+
+function render() {
+  const demo = dataset === "demo";
+  const mode = demo ? "Simulated demo" : "Uploaded CSV";
+  const period = state.period;
+  $("#dataset-period").textContent = period ? period.start + " to " + period.end + " · IST" : mode;
+  $("#source-label").textContent = mode;
+  $("#footer-source").textContent = mode;
+  $("#insight-title").textContent = demo ? state.insight.title : state.account.campus;
+  const buildingCount = number(state.kpis.buildings) + (state.kpis.buildings === 1 ? " building" : " buildings");
+  $("#insight-description").textContent = demo ? state.insight.body : buildingCount + " · " + number(state.kpis.coverage) + "% reading coverage";
+  for (const [kind, unit] of Object.entries(units)) {
+    $("#" + kind + "-total").textContent = state.kpis[kind] == null ? "No readings" : number(state.kpis[kind]) + " " + unit;
+  }
+  $("#coverage-total").textContent = number(state.kpis.coverage) + "%";
+  $("#coverage-detail").textContent = demo ? "Coverage for the selected demo period." : number(state.kpis.missing) + " missing hourly readings.";
+  $("#alert-count").textContent = state.alerts.length + " active";
+
+  $("#building-cards").replaceChildren(...state.buildings.map((building) => {
+    const card = row("article", "building-card");
+    const metrics = row("div", "building-metrics");
+    for (const [kind, unit] of Object.entries(units)) {
+      const metric = row("div", "");
+      metric.append(row("strong", "", number(building[kind])), row("small", "", unit));
+      metrics.append(metric);
+    }
+    card.append(row("h3", "", building.name), metrics);
+    return card;
+  }));
+
+  const alerts = state.alerts.map((alert) => {
+    const card = row("div", "alert-row");
+    const content = row("div", "");
+    content.append(row("h4", "", alert.title), row("p", "", alert.detail), row("small", "", alert.building + " · " + alert.time));
+    card.append(row("span", "alert-bar " + alert.severity), content);
+    return card;
+  });
+  $("#alerts-list").replaceChildren(...(alerts.length ? alerts : [row("p", "", "Signal checks are available in the demo dataset.")]));
+  const actions = state.actions.map((action) => {
+    const card = row("div", "action-row");
+    const toggle = row("button", "check" + (action.done ? " done" : ""), action.done ? "✓" : "○");
+    toggle.setAttribute("aria-label", action.title);
+    toggle.setAttribute("aria-pressed", String(action.done));
+    toggle.addEventListener("click", async () => {
+      toggle.disabled = true;
+      try {
+        const updated = await request("/api/actions/" + encodeURIComponent(action.id) + "/toggle?dataset=" + encodeURIComponent(dataset), {method:"POST"});
+        action.done = updated.done;
+        render();
+      } catch (error) {
+        $("#dashboard-status").textContent = error.message;
+        toggle.disabled = false;
+      }
+    });
+    const content = row("div", "");
+    content.append(row("h4", "", action.title), row("p", "", action.detail));
+    card.append(toggle, content);
+    return card;
+  });
+  $("#actions-list").replaceChildren(...(actions.length ? actions : [row("p", "", "No review actions for this dataset.")]));
+  drawResource();
+}
+
+function drawResource() {
+  if (!state) return;
+  for (const button of document.querySelectorAll("[data-resource]")) {
+    const selected = button.dataset.resource === resource;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+  const series = state.chart[resource];
+  const max = Math.max(1, ...series.map((item) => item.value));
+  const points = series.map((item, index) =>
+    (index / Math.max(1, series.length - 1) * 720) + "," + (235 - item.value / max * 205));
+  const curve = points.length ? "M " + points.join(" L ") + (points.length === 1 ? " h 2" : "") : "";
+  $("#line").setAttribute("d", curve);
+  $("#area").setAttribute("d", points.length > 1 ? curve + " L 720,235 L 0,235 Z" : "");
+  $(".y-axis").replaceChildren(...(series.length ? [max, max * .5, 0].map((val) => row("span", "", number(val))) : []));
+  const labelCount = Math.min(5, series.length);
+  const labels = Array.from({length:labelCount}, (_, n) => series[Math.round(n * (series.length - 1) / Math.max(1, labelCount - 1))].timestamp.slice(0, 10));
+  $(".x-axis").replaceChildren(...labels.map((date) => row("span", "", date)));
+  $("#chart-status").textContent = points.length ? "Consumption in " + units[resource] : "No " + resource + " readings in this dataset.";
+  const forecast = state.forecast[resource];
+  $("#forecast-title").textContent = (resource === "energy" ? "Energy" : "Water") + " forecast";
+  $("#forecast-total").textContent = forecast ? number(forecast.total) + " " + forecast.unit : "Unavailable";
+  $("#forecast-detail").textContent = forecast?.date
+    ? forecast.date + " · Peak at " + forecast.peak + " IST · Same-hour median"
+    : forecast ? "Simulated forecast · Peak at " + forecast.peak + " IST"
+      : "Forecasts need four complete days shared by the buildings with this resource.";
+  const bars = forecast?.points ?? [];
+  const ceiling = Math.max(1, ...bars);
+  $("#forecast-bars").replaceChildren(...bars.map((value) => {
+    const bar = row("i", "");
+    bar.style.height = value / ceiling * 100 + "%";
+    return bar;
+  }));
+  $("#forecast-bars").hidden = !bars.length;
+}
+
+async function importCsv(input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
+  const status = $("#import-status");
+  const results = $("#import-results");
+  let saved = 0;
+  let lastSuccess;
+  input.value = "";
+  input.disabled = true;
+  results.replaceChildren();
+  try {
+    for (const [index, file] of files.entries()) {
+      status.textContent = "Importing file " + (index + 1) + " of " + files.length + "…";
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const result = await request("/api/import", {method:"POST", body:form, signal:AbortSignal.timeout(60_000)});
+        results.append(row("li", "", file.name + " · " + number(result.rows) + " readings saved."));
+        lastSuccess = result.id;
+        saved++;
+      } catch (error) {
+        results.append(row("li", "import-failure", file.name + " · " + error.message));
+      }
+    }
+    if (lastSuccess) await load(lastSuccess);
+    status.textContent = saved + " of " + files.length + " files imported.";
+  } finally {
+    input.disabled = false;
+  }
+}
+
+setupPage();
+$("#dataset-select").addEventListener("change", (event) => void load(event.target.value));
+$("#csv-file").addEventListener("change", (event) => void importCsv(event.target));
+document.querySelectorAll("[data-resource]").forEach((button) => {
+  button.addEventListener("click", () => { resource = button.dataset.resource; drawResource(); });
+});
+void load(dataset, true);

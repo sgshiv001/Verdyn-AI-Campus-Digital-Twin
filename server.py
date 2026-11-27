@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 import csv
-import copy
 import glob
-import io
+from hashlib import sha256
 import math
 import random
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from threading import Lock
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from campus_csv import IST, parse_readings, summarize_upload
+
 ROOT = Path(__file__).resolve().parent
-IST = timezone(timedelta(hours=5, minutes=30))
 
 app = FastAPI(title="Verdyn", version="2.0.0")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
@@ -93,9 +94,14 @@ def load_archive_demo() -> dict[str, Any]:
         for row in csv.DictReader(handle):
             names[row["building_id"]] = row["building_name"]
     rows: list[dict[str, Any]] = []
-    for filename in monthly:
+    available_dates = set()
+    for filename in reversed(monthly):
         with open(filename, newline="", encoding="utf-8-sig") as handle:
-            rows.extend(csv.DictReader(handle))
+            for row in csv.DictReader(handle):
+                rows.append(row)
+                available_dates.add(row["timestamp_local"][:10])
+        if len(available_dates) >= 14:
+            break
     dates = sorted({row["timestamp_local"][:10] for row in rows})
     recent_dates = set(dates[-14:])
     recent = [row for row in rows if row["timestamp_local"][:10] in recent_dates]
@@ -152,66 +158,26 @@ DATASETS: dict[str, dict[str, Any]] = {"demo": {"id": "demo", "name": "Verdyn de
 UPLOADED: dict[str, dict[str, Any]] = {}
 
 
-def uploaded_payload(rows: list[dict[str, Any]], filename: str) -> dict[str, Any]:
-    fields = set(rows[0]) if rows else set()
-    timestamp_key = next((key for key in ("timestamp_local", "timestamp", "recorded_at", "datetime") if key in fields), None)
-    building_key = next((key for key in ("building_name", "building", "building_id", "site") if key in fields), None)
-    energy_key = next((key for key in ("electricity_kwh", "energy_kwh", "energy", "kwh") if key in fields), None)
-    water_key = next((key for key in ("water_liters", "water_kl", "water", "kl") if key in fields), None)
-    if not timestamp_key or not building_key or not energy_key and not water_key:
-        raise ValueError("CSV needs a timestamp, building, and energy or water column.")
-    clean = []
-    for row in rows:
-        timestamp = str(row.get(timestamp_key, ""))[:19]
-        building = str(row.get(building_key, "Unknown building"))
-        if not timestamp or not building:
-            continue
-        try:
-            energy = float(row.get(energy_key, 0) or 0) if energy_key else 0
-            water_raw = float(row.get(water_key, 0) or 0) if water_key else 0
-        except ValueError:
-            continue
-        water = water_raw / 1000 if water_key and "liter" in water_key.lower() else water_raw
-        clean.append({"timestamp": timestamp, "building": building, "energy": energy, "water": water})
-    if not clean:
-        raise ValueError("No readable rows found in the CSV.")
-    days = sorted({row["timestamp"][:10] for row in clean})
-    recent_days = set(days[-14:])
-    recent = [row for row in clean if row["timestamp"][:10] in recent_days]
-    names = sorted({row["building"] for row in recent})
-    colors = ["lime", "cyan", "orange", "violet"]
-    buildings = []
-    for index, name in enumerate(names):
-        subset = [row for row in recent if row["building"] == name]
-        energy = sum(row["energy"] for row in subset)
-        water = sum(row["water"] for row in subset)
-        buildings.append({"id": f"uploaded-{index}", "name": name, "short": f"B{index + 1:02d}", "area": "Imported meter", "occupancy": "—", "color": colors[index % 4], "energy": round(energy), "water": round(water), "efficiency": 88, "change": "—", "status": "Imported"})
-    daily_energy = {day: 0.0 for day in recent_days}
-    daily_water = {day: 0.0 for day in recent_days}
-    for row in recent:
-        daily_energy[row["timestamp"][:10]] += row["energy"]
-        daily_water[row["timestamp"][:10]] += row["water"]
-    payload = copy.deepcopy(DATA)
-    payload["account"] = {"name": "Imported campus", "email": "demo@verdyn.app", "mode": f"Uploaded · {filename}", "campus": "Imported dataset"}
-    payload["kpis"] = {"energy": round(sum(daily_energy.values())), "energy_change": 0, "water": round(sum(daily_water.values())), "water_change": 0, "coverage": 100, "alerts": 1, "buildings": len(buildings)}
-    payload["buildings"] = buildings
-    payload["chart"] = {"energy": [{"timestamp": day, "value": round(daily_energy[day])} for day in sorted(daily_energy)], "water": [{"timestamp": day, "value": round(daily_water[day])} for day in sorted(daily_water)]}
-    payload["alerts"] = [{"id": "import-quality", "severity": "low", "building": "Imported dataset", "title": "Import ready for review", "detail": f"{len(clean):,} readable rows loaded from {filename}.", "time": "Just now", "score": 74}]
-    payload["actions"] = [{"id": "import-action", "title": "Review imported readings", "detail": "Check the imported building names and units before presenting this dataset as measured data.", "owner": "Data quality", "priority": "Medium", "due": "Today", "done": False}]
-    return payload
+UPLOAD_LIMIT = 10 * 1024 * 1024
+IMPORT_LOCK = Lock()
+
+
+def register_upload(dataset_id, filename, readings, payload):
+    UPLOADED[dataset_id] = payload
+    DATASETS[dataset_id] = {
+        "id": dataset_id, "name": filename, "rows": len(readings), "mode": "Uploaded CSV",
+    }
 
 
 for saved_file in sorted(UPLOAD_DIR.glob("upload-*.csv")):
-    match = re.match(r"(upload-\d+)-(.+)$", saved_file.name)
+    match = re.fullmatch(r"(upload-(?:[a-f0-9]{64}|\d+))-(.+)", saved_file.name)
     if not match:
         continue
     saved_id, original_name = match.groups()
     try:
-        with saved_file.open(newline="", encoding="utf-8-sig") as handle:
-            saved_rows = list(csv.DictReader(handle))
-        UPLOADED[saved_id] = uploaded_payload(saved_rows, original_name)
-        DATASETS[saved_id] = {"id": saved_id, "name": original_name, "rows": len(saved_rows), "mode": "Uploaded · saved locally"}
-    except (OSError, UnicodeDecodeError, ValueError):
+        readings = parse_readings(saved_file.read_bytes())
+        register_upload(saved_id, original_name, readings, summarize_upload(readings, original_name))
+    except (OSError, UnicodeError, csv.Error, ValueError):
         continue
 
 
@@ -232,37 +198,56 @@ def health() -> dict[str, str]:
 
 @app.get("/api/datasets")
 def datasets() -> list[dict[str, Any]]:
-    return list(DATASETS.values())
+    with IMPORT_LOCK:
+        return list(DATASETS.values())
 
 
 @app.get("/api/dashboard")
 def dashboard(dataset: str = "demo") -> dict[str, Any]:
-    return UPLOADED.get(dataset, DATA)
+    if dataset == "demo":
+        return DATA
+    if dataset not in UPLOADED:
+        raise HTTPException(404, "This dataset is no longer available.")
+    return UPLOADED[dataset]
 
 
 @app.post("/api/actions/{action_id}/toggle")
 def toggle_action(action_id: str, dataset: str = "demo") -> dict[str, Any]:
-    target = UPLOADED.get(dataset, DATA)
+    target = dashboard(dataset)
     for action in target["actions"]:
         if action["id"] == action_id:
             action["done"] = not action["done"]
             return action
-    return {"error": "Action not found"}
+    raise HTTPException(404, "Action not found.")
 
 
-@app.post("/api/import")
-async def import_csv(file: UploadFile = File(...)) -> dict[str, Any]:
-    raw = await file.read()
-    filename = file.filename or "uploaded.csv"
-    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
+@app.post("/api/import", status_code=201)
+def import_csv(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = (file.filename or "uploaded.csv").replace("\\", "/").rsplit("/", 1)[-1]
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(422, "Choose a .csv file.")
+    raw = file.file.read(UPLOAD_LIMIT + 1)
+    if len(raw) > UPLOAD_LIMIT:
+        raise HTTPException(413, "Each file can be up to 10 MB.")
     try:
-        payload = uploaded_payload(rows, filename)
-    except ValueError as error:
-        return {"error": str(error)}
-    dataset_id = f"upload-{len(UPLOADED) + 1}"
-    safe_name = f"{dataset_id}-{Path(filename).name}"
-    (UPLOAD_DIR / safe_name).write_bytes(raw)
-    UPLOADED[dataset_id] = payload
-    DATASETS[dataset_id] = {"id": dataset_id, "name": filename, "rows": len(rows), "mode": "Uploaded · saved locally"}
-    return {"id": dataset_id, "filename": filename, "rows": len(rows), "message": "Imported and saved. The dashboard can now switch to this dataset."}
+        readings = parse_readings(raw)
+        payload = summarize_upload(readings, filename)
+    except UnicodeDecodeError as error:
+        raise HTTPException(422, "Save the file as UTF-8 CSV and try again.") from error
+    except (csv.Error, ValueError) as error:
+        raise HTTPException(422, str(error)) from error
 
+    dataset_id = "upload-" + sha256(raw).hexdigest()
+    with IMPORT_LOCK:
+        if dataset_id not in DATASETS:
+            # Use a bounded name on disk and replace atomically after a complete write.
+            stem = re.sub(r"[^\w. -]", "_", filename[:-4])[:80] or "uploaded"
+            target = UPLOAD_DIR / f"{dataset_id}-{stem}.csv"
+            temporary = target.with_suffix(".tmp")
+            try:
+                temporary.write_bytes(raw)
+                temporary.replace(target)
+            except OSError as error:
+                raise HTTPException(503, "The CSV could not be saved. Check local disk access and retry.") from error
+            register_upload(dataset_id, filename, readings, payload)
+        return {"id": dataset_id, "filename": filename, "rows": len(readings)}

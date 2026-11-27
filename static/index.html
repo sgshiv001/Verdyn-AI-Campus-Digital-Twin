@@ -5,23 +5,54 @@
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand"><div class="brand-mark">V</div><div><b>verdyn</b><span>Campus intelligence</span></div></div>
-    <div class="workspace"><span class="avatar">NU</span><div><small>WORKSPACE</small><b>Northstar University</b></div><span class="chevron">⌄</span></div>
-    <nav><small class="nav-label">WORKSPACE</small><a class="active" href="/"><i>◉</i>Overview</a><a href="/buildings"><i>▦</i>Buildings</a><a href="/insights"><i>✦</i>Insights <em>3</em></a><a href="/actions"><i>✓</i>Action plan</a><small class="nav-label space">DATA</small><a href="/quality"><i>◌</i>Data quality</a><a href="/imports"><i>↥</i>Imports</a></nav>
-    <div class="sidebar-bottom"><div class="help">?<div><b>Need a hand?</b><span>Read the demo guide</span></div></div><div class="user"><span class="avatar green">DM</span><div><b>Demo account</b><span>demo@verdyn.app</span></div><span>•••</span></div></div>
+    <div class="workspace"><span class="avatar">NU</span><div><small>WORKSPACE</small><b>Campus workspace</b></div><span class="chevron">⌄</span></div>
+    <nav><small class="nav-label">WORKSPACE</small><a class="active" href="/"><i>◉</i>Overview</a><a href="/buildings"><i>▦</i>Buildings</a><a href="/insights"><i>✦</i>Insights</a><a href="/actions"><i>✓</i>Action plan</a><small class="nav-label space">DATA</small><a href="/quality"><i>◌</i>Data quality</a><a href="/imports"><i>↥</i>Imports</a></nav>
+    <div class="sidebar-bottom"><div class="user"><span class="avatar green">DM</span><div><b>Demo account</b><span>demo@verdyn.app</span></div><span>•••</span></div></div>
   </aside>
   <main class="main">
-    <header class="topbar"><div class="mobile-brand"><span class="brand-mark">V</span><b>verdyn</b></div><div class="top-actions"><select id="dataset-select" class="dataset-select" aria-label="Choose dataset" onchange="changeDataset(this.value)"></select><span class="demo-pill"><span></span> Demo environment</span><button class="icon-btn">⌕</button><button class="icon-btn">◔</button><button class="icon-btn notify">♧<i></i></button><span class="avatar green">DM</span></div></header>
+    <header class="topbar">
+      <div class="mobile-brand"><span class="brand-mark">V</span><b>verdyn</b></div>
+      <div class="top-actions"><label for="dataset-select">Dataset</label><select id="dataset-select" class="dataset-select" aria-label="Choose dataset"></select></div>
+    </header>
+    <nav class="mobile-nav" aria-label="Dashboard sections">
+      <a href="/">Overview</a><a href="/buildings">Buildings</a><a href="/insights">Insights</a>
+      <a href="/actions">Actions</a><a href="/quality">Data quality</a><a href="/imports">Imports</a>
+    </nav>
+    <p id="dashboard-status" role="status" class="dashboard-status"></p>
     <div class="content">
-      <section class="welcome" id="overview"><div><p class="eyebrow">THURSDAY, 26 NOVEMBER 2026 <span>·</span> 09:42 IST</p><h1>Good morning, Dr. Mehta <span>✦</span></h1><p class="subhead">Here’s what’s happening across your campus today.</p></div><div class="welcome-actions"><button class="btn light" onclick="showToast('Showing the latest 14 days.')">⌄ Last 14 days</button><a class="btn dark" href="/imports">＋ Import data</a></div></section>
-      <section class="hero-grid"><article class="hero-card"><div class="hero-kicker"><span class="spark">✦</span> VERDYN INTELLIGENCE</div><h2>The campus is trending <strong>better.</strong></h2><p>Energy is down <b>4.8%</b> this week. Science Block is the only exception — driven by afternoon cooling demand.</p><div class="hero-foot"><span>12.4% <small>avoidable demand identified</small></span><button onclick="document.querySelector('#insights').scrollIntoView({behavior:'smooth'})">View insight <span>→</span></button></div><div class="hero-orbit"></div></article><div class="kpi-stack"><article class="kpi"><div class="kpi-head"><span class="kpi-icon lime">↯</span><span>ENERGY CONSUMPTION <b>↓ 4.8%</b></span></div><strong>197,600 <small>kWh</small></strong><div class="mini-chart lime-chart"></div><p>vs. 207,540 kWh previous period</p></article><article class="kpi"><div class="kpi-head"><span class="kpi-icon cyan">≈</span><span>WATER CONSUMPTION <b class="up">↑ 2.3%</b></span></div><strong>80,660 <small>kL</small></strong><div class="mini-chart cyan-chart"></div><p>vs. 78,840 kL previous period</p></article></div></section>
+      <section class="welcome" id="overview">
+        <div><p class="eyebrow" id="dataset-period"></p><h1>Campus dashboard</h1><p class="subhead">Compare campus energy and water usage.</p></div>
+        <div class="welcome-actions"><a class="btn dark" href="/imports">Import data</a></div>
+      </section>
+      <section class="hero-grid">
+        <article class="hero-card"><div class="hero-kicker" id="source-label"></div>
+          <h2 id="insight-title"></h2><p id="insight-description"></p>
+        </article>
+        <div class="kpi-stack">
+          <article class="kpi"><div class="kpi-head">Energy consumption</div><strong id="energy-total">—</strong></article>
+          <article class="kpi"><div class="kpi-head">Water consumption</div><strong id="water-total">—</strong></article>
+        </div>
+      </section>
       <section class="section-head" id="buildings"><div><p class="eyebrow">CAMPUS PULSE</p><h2>How your buildings are doing</h2></div><a href="/buildings">View full comparison <span>→</span></a></section>
       <section class="building-grid" id="building-cards"></section>
-      <section class="two-col" id="insights"><article class="panel chart-panel"><div class="panel-head"><div><p class="eyebrow">RESOURCE TRENDS</p><h2>Consumption over time</h2></div><div class="segmented"><button class="selected" data-resource="energy">Energy</button><button data-resource="water">Water</button></div></div><div class="chart-wrap"><div class="y-axis"><span>20k</span><span>15k</span><span>10k</span><span>5k</span><span>0</span></div><svg id="trend-chart" viewBox="0 0 720 260" preserveAspectRatio="none"><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#b9ef43" stop-opacity=".3"/><stop offset="1" stop-color="#b9ef43" stop-opacity="0"/></linearGradient></defs><path id="area" fill="url(#fill)" d=""/><path id="line" fill="none" stroke="#b9ef43" stroke-width="3" d=""/><g id="dots"></g></svg><div class="x-axis"><span>13 Nov</span><span>16 Nov</span><span>19 Nov</span><span>22 Nov</span><span>26 Nov</span></div></div><div class="chart-legend"><span><i class="dot lime"></i> This period</span><span><i class="dot gray"></i> Previous period</span><b>↘ 4.8% vs previous period</b></div></article><article class="panel forecast-panel"><div class="panel-head"><div><p class="eyebrow">NEXT 24 HOURS</p><h2>What to expect</h2></div><span class="confidence">87% confidence</span></div><div class="forecast-main"><div><span class="forecast-label">PREDICTED ENERGY</span><strong>14,280 <small>kWh</small></strong><b>↓ 6.2%</b></div><div class="forecast-ring"><span>87<small>%</small></span><em>confidence</em></div></div><div class="forecast-bars"><i style="height:45%"></i><i style="height:54%"></i><i style="height:50%"></i><i style="height:65%"></i><i style="height:74%"></i><i style="height:85%"></i><i style="height:62%"></i><i style="height:48%"></i><i style="height:38%"></i><i style="height:34%"></i><i style="height:28%"></i><i style="height:22%"></i></div><div class="forecast-meta"><span>Peak demand <b>14:00 IST</b></span><span>Model <b>same-hour median</b></span></div></article></section>
-      <section class="section-head insights-head"><div><p class="eyebrow">NEEDS YOUR ATTENTION</p><h2>Signals worth a closer look</h2></div><span class="live"><i></i> Updated just now</span></section>
-      <section class="lower-grid"><article class="panel alerts-panel"><div class="panel-head"><div><h2>Detected signals</h2><p>Evidence-based checks from your campus data.</p></div><span class="count">3 active</span></div><div id="alerts-list"></div><a class="panel-link" href="/insights">See all signals <span>→</span></a></article><article class="panel action-panel" id="actions"><div class="panel-head"><div><h2>Action plan</h2><p>Turn a signal into a next step.</p></div><a href="/actions">View all <span>→</span></a></div><div id="actions-list"></div></article></section>
-      <section class="quality-banner" id="quality"><div class="quality-icon">✓</div><div><p class="eyebrow">DATA QUALITY</p><h2>Your campus data is <strong>ready to review</strong></h2><p>Verdyn checks coverage and alignment before using a dataset in comparisons or forecasts.</p></div><button onclick="showToast('Data quality report is shown above.')">Review data quality <span>→</span></button></section>
-      <section class="import-panel panel" id="imports"><div><p class="eyebrow">OPTIONAL</p><h2>Bring your own readings</h2><p>Demo data is active by default. Import an hourly CSV when you’re ready to test real campus data.</p><div id="dataset-list" class="dataset-list"></div></div><label class="upload-btn">＋ Choose CSV <input id="csv-file" type="file" accept=".csv" onchange="importCsv(this)"></label></section>
-      <footer><span>verdyn <b>·</b> Campus resource intelligence</span><span>Demo data <b>·</b> No live sensors connected</span></footer>
+      <section class="two-col" id="insights"><article class="panel chart-panel"><div class="panel-head"><div><p class="eyebrow">RESOURCE TRENDS</p><h2>Consumption over time</h2></div><div class="segmented"><button class="selected" data-resource="energy">Energy</button><button data-resource="water">Water</button></div></div><div class="chart-wrap"><div class="y-axis" aria-hidden="true"></div><svg id="trend-chart" viewBox="0 0 720 260" preserveAspectRatio="none"><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#b9ef43" stop-opacity=".3"/><stop offset="1" stop-color="#b9ef43" stop-opacity="0"/></linearGradient></defs><path id="area" fill="url(#fill)" d=""/><path id="line" fill="none" stroke="#b9ef43" stroke-width="3" d=""/><g id="dots"></g></svg><div class="x-axis"></div></div><p id="chart-status"></p></article><article class="panel forecast-panel">
+        <div class="panel-head"><div><p class="eyebrow">Next 24 hours</p><h2 id="forecast-title">Forecast</h2></div></div>
+        <div class="forecast-main"><strong id="forecast-total">—</strong></div>
+        <div class="forecast-bars" id="forecast-bars" aria-hidden="true"></div>
+        <p id="forecast-detail"></p>
+      </article></section>
+      <section class="section-head insights-head"><div><p class="eyebrow">NEEDS YOUR ATTENTION</p><h2>Signals worth a closer look</h2></div></section>
+      <section class="lower-grid"><article class="panel alerts-panel"><div class="panel-head"><div><h2>Detected signals</h2><p>Review unusual readings when available.</p></div><span id="alert-count" class="count"></span></div><div id="alerts-list"></div><a class="panel-link" href="/insights">See all signals <span>→</span></a></article><article class="panel action-panel" id="actions"><div class="panel-head"><div><h2>Action plan</h2><p>Turn a signal into a next step.</p></div><a href="/actions">View all <span>→</span></a></div><div id="actions-list"></div></article></section>
+      <section class="quality-banner" id="quality"><div class="quality-icon" aria-hidden="true">✓</div><div><p class="eyebrow">Data quality</p><h2>Reading coverage <strong id="coverage-total">—</strong></h2><p id="coverage-detail"></p></div></section>
+      <section class="import-panel panel" id="imports">
+        <div><h2>Import campus readings</h2><p>Select one or more UTF-8 CSVs. Each file can be up to 10 MB.</p>
+          <p>Use <code>recorded_at,building,resource,value,unit</code> or separate energy and water columns.</p>
+          <p id="import-status" role="status"></p><ul id="import-results" aria-label="Import results"></ul>
+          <div id="dataset-list" class="dataset-list"></div>
+        </div>
+        <label class="upload-btn" for="csv-file">Choose CSV files<input id="csv-file" type="file" accept=".csv,text/csv" multiple></label>
+      </section>
+      <footer><span>verdyn <b>·</b> Campus resource intelligence</span><span><span id="footer-source"></span></span></footer>
     </div>
   </main>
 </div><div id="toast" class="toast"></div><script src="/static/app.js"></script>
